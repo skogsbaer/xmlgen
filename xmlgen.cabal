@@ -1,0 +1,14 @@
+Name:                xmlgen
+Version:             0.1.0.0
+Synopsis:            Fast XML generation library
+License:             BSD3
+License-file:        LICENSE
+Author:              Stefan Schmidt, Stefan Wehr
+Maintainer:          wehr@factisresearch.com
+Category:            Text
+Build-type:          Simple
+Cabal-version:       >=1.2
+
+
+Library
+  Exposed-modules:   Text.XML.Generator
