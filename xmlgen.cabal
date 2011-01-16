@@ -14,4 +14,31 @@ Library
   Hs-Source-Dirs:    src
   Build-Depends:     blaze-builder >= 0.2 && < 0.3, base >= 4.2 && < 4.4,
                      bytestring >= 0.9 && < 0.10, containers >= 0.3 && < 0.5,
-                     monads-tf >= 0.1 && < 0.2
+                     monads-tf >= 0.1 && < 0.2, text == 0.10.*
+  Ghc-Prof-Options: -auto-all -caf-all
+
+Flag tests
+  description: Build test suite
+  default:     False
+
+Executable tests
+  If flag(tests)
+    Build-Depends: HTF == 0.6.*
+  Else
+    Buildable: False
+  Hs-Source-Dirs: src
+  Main-Is:        src/Text/XML/GeneratorTest.hs
+
+Flag benchmarks
+  description: Build benchmarks
+  default:     False
+
+Executable benchmarks
+  If flag(benchmarks)
+    Build-Depends: criterion == 0.5.*
+  Else
+    Buildable: False
+  Hs-Source-Dirs: src
+  Ghc-Options: -O2
+  Ghc-Prof-Options: -auto-all -caf-all
+  Main-Is:        Text/XML/GeneratorBenchmarks.hs

@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses #-}
 module Text.XML.Generator (
 
     Xml, Doc, DocInfo, Elem, Attr, Namespace, Prefix, Uri
@@ -6,9 +6,9 @@ module Text.XML.Generator (
   , XmlOutput, Renderable
 
   , ns, doc, defaultDocInfo
-  , xattr, xattrQ, xattrs
+  , xattr, xattrRaw, xattrQ, xattrQRaw, xattrs
   , xelem, xelemEmpty, xelems, xelemQ
-  , xtext, xentityRef, xprocessingInstruction, xcomment, xempty
+  , xtext, xtextRaw, xentityRef, xprocessingInstruction, xcomment, xempty
   , xrender
 
   , (<>), (<#>)
@@ -21,9 +21,8 @@ module Text.XML.Generator (
 {-
 TODO:
 
-- raw content
-- Data.Text.Text, Data.Text.Lazy.Text as type for content
-- tests
+- benchmarks
+- documentation
 
 -}
 
@@ -31,7 +30,7 @@ import Prelude hiding (elem)
 import Control.Monad.Reader (Reader(..), ask, asks, runReader)
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy as BSL
-import Data.Monoid
+import Data.Monoid hiding (mconcat)
 
 import Blaze.ByteString.Builder hiding (empty, append)
 import qualified Blaze.ByteString.Builder as Blaze
@@ -41,7 +40,10 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 
 import Data.Char (isPrint, ord)
+import qualified Data.String as S
 
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 --
 -- Basic definitions
 --
@@ -113,47 +115,94 @@ doc di rootElem = Xml $ \(Doc buffer) ->
        postMisc = docInfo_postMisc di
 
 --
+-- Text content
+--
+
+class RawTextContent t where
+    rawTextBuilder :: t -> Builder
+
+class RawTextContent t => TextContent t where
+    escape :: t -> t
+    textBuilder :: TextContent t => t -> Builder
+    textBuilder = rawTextBuilder . escape
+
+instance RawTextContent String where
+    rawTextBuilder = fromString
+
+instance TextContent String where
+    escape = genericEscape foldr showString showChar
+
+instance RawTextContent T.Text where
+    rawTextBuilder = fromText
+
+instance TextContent T.Text where
+    escape = genericEscape T.foldr T.append T.cons
+
+instance RawTextContent TL.Text where
+    rawTextBuilder = fromLazyText
+
+instance TextContent TL.Text where
+    escape = genericEscape TL.foldr TL.append TL.cons
+
+instance RawTextContent BS.ByteString where
+    rawTextBuilder = fromByteString
+
+instance RawTextContent BSL.ByteString where
+    rawTextBuilder = fromLazyByteString
+
+--
 -- Attributes
 --
 
-class MkAttr n where
-    type MkAttrRes n
-    xattr :: n -> MkAttrRes n
+-- Note: attributes are quoted with "
 
-instance MkAttr String where
-    type MkAttrRes String = String -> Xml Attr
+class MkAttr n t where
+    type MkAttrRes n t
+    xattr :: TextContent t => n -> MkAttrRes n t
+    xattrRaw :: RawTextContent t => n -> MkAttrRes n t
+
+instance MkAttr String t where
+    type MkAttrRes String t = t -> Xml Attr
     xattr = xattrQ DefaultNamespace
+    xattrRaw = xattrQRaw DefaultNamespace
 
-instance MkAttr Namespace where
-    type MkAttrRes Namespace = String -> String -> Xml Attr
+instance MkAttr Namespace t where
+    type MkAttrRes Namespace t = String -> t -> Xml Attr
     xattr = xattrQ
+    xattrRaw = xattrQRaw
 
 -- value is escaped
-xattrQ :: Namespace -> String -> String -> Xml Attr
-xattrQ ns' key value = Xml $ \(Attr buffer) ->
+xattrQ :: TextContent t => Namespace -> String -> t -> Xml Attr
+xattrQ ns key value = xattrQRaw' ns key (textBuilder value)
+
+-- value is NOT escaped
+xattrQRaw :: RawTextContent t => Namespace -> String -> t -> Xml Attr
+xattrQRaw ns key value = xattrQRaw' ns key (rawTextBuilder value)
+
+xattrQRaw' :: Namespace -> String -> Builder -> Xml Attr
+xattrQRaw' ns' key valueBuilder = Xml $ \(Attr buffer) ->
     do uriMap' <- ask
        let (ns, uriMap, newNs) = genValidNsForDesiredPrefix uriMap' ns'
            builder = case ns of
-                       DefaultNamespace -> mconcat [spaceBuilder, keyBuilder, startBuilder
-                                                   ,valueBuilder, endBuilder]
+                       DefaultNamespace -> spaceBuilder `mappend` keyBuilder `mappend` startBuilder
+                                           `mappend` valueBuilder `mappend` endBuilder
                        QualifiedNamespace p u ->
                            let uriBuilder = fromString u
                                prefixBuilder = fromString p
                            in if newNs
-                                 then mconcat [spaceBuilder, nsDeclStartBuilder, colonBuilder
-                                              ,prefixBuilder, startBuilder, uriBuilder
-                                              ,endBuilder, spaceBuilder, prefixBuilder
-                                              ,colonBuilder, keyBuilder, startBuilder
-                                              ,valueBuilder, endBuilder]
-                                  else mconcat [spaceBuilder, prefixBuilder, colonBuilder
-                                               ,keyBuilder, startBuilder
-                                               ,valueBuilder, endBuilder]
-       return $ (Attr (mconcat [buffer, builder]), uriMap)
+                                 then spaceBuilder `mappend` nsDeclStartBuilder `mappend` colonBuilder
+                                      `mappend` prefixBuilder `mappend` startBuilder `mappend` uriBuilder
+                                      `mappend` endBuilder `mappend` spaceBuilder `mappend` prefixBuilder
+                                      `mappend` colonBuilder `mappend` keyBuilder `mappend` startBuilder
+                                      `mappend` valueBuilder `mappend` endBuilder
+                                  else spaceBuilder `mappend` prefixBuilder `mappend` colonBuilder
+                                       `mappend` keyBuilder `mappend` startBuilder
+                                       `mappend` valueBuilder `mappend` endBuilder
+       return $ (Attr (buffer `mappend` builder), uriMap)
     where
       spaceBuilder = fromString " "
       keyBuilder = fromString key
       startBuilder = fromString "=\""
-      valueBuilder = fromString (escape value)
       endBuilder = fromString "\""
       nsDeclStartBuilder = fromString "xmlns"
       colonBuilder = fromString ":"
@@ -208,7 +257,7 @@ instance AddChildren c => MkElem Namespace c where
 
 class MkEmptyElem n where
     type MkEmptyElemRes n
-    xelemEmpty ::n -> MkEmptyElemRes n
+    xelemEmpty :: n -> MkEmptyElemRes n
 
 instance MkEmptyElem String where
     type MkEmptyElemRes String = Xml Elem
@@ -225,17 +274,17 @@ xelemQ ns' name children = Xml $ \(Elem buffer) ->
        let elemNameBuilder =
                case ns of
                  DefaultNamespace -> fromString name
-                 (QualifiedNamespace p u) -> mconcat [fromString p, fromString ":", fromString name]
+                 (QualifiedNamespace p u) -> fromString p `mappend` fromString ":" `mappend` fromString name
        let nsDeclBuilder = case ns of
              DefaultNamespace -> mempty
              (QualifiedNamespace p u) ->
-                 let nsDeclaration' = mconcat [fromString " xmlns:", fromString p, fromString "=\""
-                                              ,fromString u, fromString "\""]
+                 let nsDeclaration' = fromString " xmlns:" `mappend` fromString p `mappend` fromString "=\""
+                                      `mappend` fromString u `mappend` fromString "\""
                  in if newNs then nsDeclaration' else mempty
        let b1 = mappend buffer $ fromString "<"
-       let b2 = mconcat [b1, elemNameBuilder, nsDeclBuilder]
+       let b2 = b1 `mappend` elemNameBuilder `mappend` nsDeclBuilder
        let b3 = addChildren children b2 uriMap
-       let builderOut = Elem (mconcat [b3, fromString "</", elemNameBuilder, fromString "\n>"])
+       let builderOut = Elem (b3 `mappend` fromString "</" `mappend` elemNameBuilder `mappend` fromString "\n>")
        return (builderOut, oldUriMap)
 
 xelems :: [Xml Elem] -> Xml Elem
@@ -243,6 +292,9 @@ xelems = foldl mappend noElems
 
 noElems :: Xml Elem
 noElems = xempty
+
+-- xelemWithText :: MkElem n (Xml Elem) => n -> String -> Xml Elem
+xelemWithText n t = xelem n (xtext t)
 
 instance Monoid (Xml Elem) where
     mempty = noElems
@@ -257,8 +309,12 @@ instance Monoid (Xml Elem) where
 --
 
 -- content is escaped
-xtext :: String -> Xml Elem
-xtext content = append $ fromString (escape content)
+xtext :: TextContent t => t -> Xml Elem
+xtext content = append $ textBuilder content
+
+-- content is NOT escaped
+xtextRaw :: RawTextContent t => t -> Xml Elem
+xtextRaw content = append $ rawTextBuilder content
 
 -- no escaping performed
 xentityRef :: String -> Xml Elem
@@ -356,13 +412,9 @@ append builder' = Xml $ \t ->
     do nsEnv <- ask
        return $ (mkRenderable (builder t <> builder'), nsEnv)
 
-escape :: String -> String
-escape s = escStr s ""
+genericEscape foldr showString' showChar x = foldr escChar (S.fromString "") x
     where
-      -- stolen from xml-light
-      escStr             :: String -> ShowS
-      escStr cs rs        = foldr escChar rs cs
-      escChar            :: Char -> ShowS
+      -- copied from xml-light
       escChar c = case c of
         '<'   -> showString "&lt;"
         '>'   -> showString "&gt;"
@@ -375,8 +427,9 @@ escape s = escStr s ""
         -- XXX: Is this really wortherd?
         -- We could deal with these issues when we convert characters to bytes.
         _ | (oc <= 0x7f && isPrint c) || c == '\n' || c == '\r' -> showChar c
-          | otherwise -> showString "&#" . shows oc . showChar ';'
+          | otherwise -> showString "&#" . showString (show oc) . showChar ';'
             where oc = ord c
+      showString = showString' . S.fromString
 
 --
 -- XHTML
