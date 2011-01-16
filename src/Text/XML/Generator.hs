@@ -13,6 +13,9 @@ module Text.XML.Generator (
 
   , (<>), (<#>)
 
+  , xhtmlFramesetDocInfo, xhtmlStrictDocInfo, xhtmlTransitionalDocInfo
+  , xhtmlRootElem
+
 ) where
 
 {-
@@ -108,6 +111,7 @@ doc di rootElem = Xml $ \(Doc buffer) ->
        mDocType = docInfo_docType di
        preMisc = docInfo_preMisc di
        postMisc = docInfo_postMisc di
+
 --
 -- Attributes
 --
@@ -373,3 +377,34 @@ escape s = escStr s ""
         _ | (oc <= 0x7f && isPrint c) || c == '\n' || c == '\r' -> showChar c
           | otherwise -> showString "&#" . shows oc . showChar ';'
             where oc = ord c
+
+--
+-- XHTML
+--
+xhtmlDoctypeStrict =
+    "<!DOCTYPE html\n" ++
+    "    PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\"\n" ++
+    "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">"
+
+xhtmlStrictDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeStrict }
+
+xhtmlDoctypeTransitional =
+    "<!DOCTYPE html\n" ++
+    "    PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n" ++
+    "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">"
+
+xhtmlTransitionalDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeTransitional }
+
+xhtmlDoctypeFrameset =
+    "<!DOCTYPE html\n" ++
+    "    PUBLIC \"-//W3C//DTD XHTML 1.0 Frameset//EN\"\n" ++
+    "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd\">"
+
+xhtmlFramesetDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeFrameset }
+
+xhtmlRootElem :: String -> Xml Elem -> Xml Elem
+xhtmlRootElem lang children =
+    xelem "html" (xattr "xmlns" "http://www.w3.org/1999/xhtml" <>
+                  xattr "xml:lang" lang <>
+                  xattr "lang" lang <#>
+                  children)
