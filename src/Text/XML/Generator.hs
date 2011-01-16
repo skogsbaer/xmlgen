@@ -1,4 +1,9 @@
-module Text.XML.Generator where
+module Text.XML.Generator
+    ( Prefix, Uri, Namespace(..), Xml, Attr, Elem, Out
+    , xattr, xelem, xelems, xattrQ, xelemQ, xtext, xempty, xrender
+    , (<@>), (<#>)
+    )
+where
 
 import Control.Monad.Reader (Reader(..), ask, asks, runReader)
 import qualified Data.Map as Map
@@ -24,7 +29,7 @@ data Namespace
 
 type OutEnv = Map.Map Prefix Uri
 
-type Trans t = t -> Reader OutEnv (t, OutEnv)
+type Xml t = t -> Reader OutEnv (t, OutEnv)
 
 {-
 class XmlGen t where
@@ -44,13 +49,16 @@ instance XmlGen Out where
 - namespaces
 -}
 
-xattr :: String -> String -> Trans Attr
+xattr :: String -> String -> Xml Attr
 xattr = xattrQ DefaultNamespace
 
-xelem :: String -> Trans Attr -> Trans Elem -> Trans Elem
+xelem :: String -> Xml Attr -> Xml Elem -> Xml Elem
 xelem = xelemQ DefaultNamespace
 
-xattrQ :: Namespace -> String -> String -> Trans Attr
+xelems :: [Xml Elem] -> Xml Elem
+xelems = foldl (<#>) xempty
+
+xattrQ :: Namespace -> String -> String -> Xml Attr
 xattrQ ns' key value (Out buffer) =
     do
         uriMap' <- ask
@@ -81,7 +89,7 @@ xattrQ ns' key value (Out buffer) =
           startBuilder = fromString "=\""
           endBuilder = fromString "\""
 
-xelemQ :: Namespace -> String -> Trans Attr -> Trans Elem -> Trans Elem
+xelemQ :: Namespace -> String -> Xml Attr -> Xml Elem -> Xml Elem
 xelemQ ns' name attrs elems (Out buffer)
   = do
       oldUriMap <- ask
@@ -115,11 +123,11 @@ getUri :: Namespace -> Uri
 getUri (QualifiedNamespace _ u) = u
 getUri _ = error "error!"
 
-xtext :: String -> Trans Elem
+xtext :: String -> Xml Elem
 xtext content (Out buffer)
  = return $ (Out (buffer `mappend` fromString content), error "uriMap of element evaluated")
 
-(<#>) :: Trans Elem -> Trans Elem -> Trans Elem
+(<#>) :: Xml Elem -> Xml Elem -> Xml Elem
 (<#>) comb1 comb2 t
   = do
       state <- ask
@@ -127,7 +135,7 @@ xtext content (Out buffer)
           t3 = fst $ runReader (comb2 t2) state
       return (t3, error "uriMap of element evaluated")
 
-(<@>) :: Trans Attr -> Trans Attr -> Trans Attr
+(<@>) :: Xml Attr -> Xml Attr -> Xml Attr
 (<@>) comb1 comb2 t
   = do
       state <- ask
@@ -156,21 +164,21 @@ genValidPrefix env prefix uri =
 followingPrefix :: Prefix -> Prefix
 followingPrefix p = '_':p
 
-xrender :: Trans Elem -> Builder
-xrender elem = buffer
+xrender :: Xml Elem -> BSL.ByteString
+xrender elem = toLazyByteString buffer
   where
   (Out buffer) = fst $ runReader (elem (Out $ mempty)) emptyState
 
 emptyState :: OutEnv
 emptyState = Map.empty
 
-xempty :: Trans t
+xempty :: Xml t
 xempty t = do
     env <- ask
     return (t, env)
 
 test :: IO ()
-test = BSL.putStr $ toLazyByteString $ xrender xsample
+test = BSL.putStr $ xrender xsample
 
 _NS_PR1_NS1_ = QualifiedNamespace "foo" "urn:foo"
 _NS_PR4_NS1_ = QualifiedNamespace "___foo" "urn:foo"
@@ -184,7 +192,7 @@ _NS_PR1_NS3_ = QualifiedNamespace "foo" "urn:bar"
 testNS :: Namespace
 testNS = QualifiedNamespace "foo" "http://www.example.com"
 
-xsample :: Trans Elem
+xsample :: Xml Elem
 xsample =
   xelemQ _NS_PR3_NS3_ "foo" ((xattrQ _NS_PR2_NS2_ "key" "value") <@> (xattrQ _NS_PR2_NS2_ "key2" "value"))
               (xelemQ _NS_PR1_NS1_ "bar" (xattrQ _NS_PR2_NS2_ "key" "value") (xtext "BAR")
