@@ -1,12 +1,11 @@
 {-# OPTIONS_GHC -F -pgmF htfpp #-}
 
-module Text.XML.GeneratorTest where
-
 import System.Process
 import System.Posix.Temp
 import System.FilePath
 import System.IO
 import System.IO.Unsafe
+import System.Environment
 
 import Data.Char (ord, chr)
 import qualified Data.ByteString.Lazy as BSL
@@ -127,3 +126,7 @@ instance Arbitrary ValidXmlString where
               let l = map chr ([0x9, 0xA, 0xD] ++ [0x20..0xD7FF] ++
                                [0xE000..0xFFFD] ++ [0x10000..0x10FFFF])
               in elements l
+
+main =
+    do args <- getArgs
+       runTestWithArgs args allHTFTests

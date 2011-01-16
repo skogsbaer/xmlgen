@@ -21,7 +21,6 @@ module Text.XML.Generator (
 {-
 TODO:
 
-- benchmarks
 - documentation
 
 -}
@@ -32,7 +31,7 @@ import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy as BSL
 import Data.Monoid hiding (mconcat)
 
-import Blaze.ByteString.Builder hiding (empty, append)
+import Blaze.ByteString.Builder
 import qualified Blaze.ByteString.Builder as Blaze
 import Blaze.ByteString.Builder.Char.Utf8
 
@@ -44,6 +43,7 @@ import qualified Data.String as S
 
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
+
 --
 -- Basic definitions
 --
@@ -68,15 +68,15 @@ type NsEnv = Map.Map Prefix Uri
 emptyNsEnv :: NsEnv
 emptyNsEnv = Map.empty
 
-newtype Xml t = Xml { unXml :: t -> Reader NsEnv (t, NsEnv) }
+newtype Xml t = Xml { unXml :: Reader NsEnv (t, NsEnv) }
 
-runXml :: NsEnv -> Xml t -> t -> (t, NsEnv)
-runXml nsEnv (Xml f) t = runReader (f t) nsEnv
+runXml :: NsEnv -> Xml t -> (t, NsEnv)
+runXml nsEnv (Xml x) = runReader x nsEnv
 
-xempty :: Xml t
-xempty = Xml $ \t->
+xempty :: Renderable t => Xml t
+xempty = Xml $
     do env <- ask
-       return (t, env)
+       return (mkRenderable mempty, env)
 
 --
 -- Document
@@ -96,7 +96,7 @@ defaultDocInfo = DocInfo { docInfo_standalone = True
                          , docInfo_postMisc   = xempty }
 
 doc :: DocInfo -> Xml Elem -> Xml Doc
-doc di rootElem = Xml $ \(Doc buffer) ->
+doc di rootElem = Xml $
     do let prologBuf = fromString "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"" <>
                        fromString (if standalone then "yes" else "no") <>
                        fromString "\"?>\n" <>
@@ -104,9 +104,9 @@ doc di rootElem = Xml $ \(Doc buffer) ->
                          Nothing -> mempty
                          Just s -> fromString s <> fromString "\n"
        env <- ask
-       let Doc preBuf = fst $ runXml env preMisc (Doc prologBuf)
-           Elem elemBuf = fst $ runXml env rootElem (Elem preBuf)
-           postBuf = fst $ runXml env postMisc (Doc elemBuf)
+       let Doc preBuf = fst $ runXml env preMisc
+           Elem elemBuf = fst $ runXml env rootElem
+           postBuf = fst $ runXml env postMisc
        return $ (postBuf, env)
     where
        standalone = docInfo_standalone di
@@ -180,7 +180,7 @@ xattrQRaw :: RawTextContent t => Namespace -> String -> t -> Xml Attr
 xattrQRaw ns key value = xattrQRaw' ns key (rawTextBuilder value)
 
 xattrQRaw' :: Namespace -> String -> Builder -> Xml Attr
-xattrQRaw' ns' key valueBuilder = Xml $ \(Attr buffer) ->
+xattrQRaw' ns' key valueBuilder = Xml $
     do uriMap' <- ask
        let (ns, uriMap, newNs) = genValidNsForDesiredPrefix uriMap' ns'
            builder = case ns of
@@ -198,7 +198,7 @@ xattrQRaw' ns' key valueBuilder = Xml $ \(Attr buffer) ->
                                   else spaceBuilder `mappend` prefixBuilder `mappend` colonBuilder
                                        `mappend` keyBuilder `mappend` startBuilder
                                        `mappend` valueBuilder `mappend` endBuilder
-       return $ (Attr (buffer `mappend` builder), uriMap)
+       return $ (Attr builder, uriMap)
     where
       spaceBuilder = fromString " "
       keyBuilder = fromString key
@@ -215,33 +215,34 @@ noAttrs = xempty
 
 instance Monoid (Xml Attr) where
     mempty = noAttrs
-    mappend x1 x2 = Xml $ \t ->
-        do nsEnv <- ask
-           let (t2, nsEnv') = runXml nsEnv x1 t
-           return $ runXml nsEnv' x2 t2
+    mappend x1 x2 = Xml $
+        do env <- ask
+           let (Attr b1, env') = runXml env x1
+           let (Attr b2, env'') = runXml env' x2
+           return $ (Attr $ b1 `mappend` b2, env'')
 
 --
 -- Elements
 --
 
 class AddChildren c where
-    addChildren :: c -> Builder -> NsEnv -> Builder
+    addChildren :: c -> NsEnv -> Builder
 
 instance AddChildren (Xml Attr) where
-    addChildren attrs builder uriMap =
-       let (Attr builder', _) = runXml uriMap attrs (Attr builder)
+    addChildren attrs uriMap =
+       let (Attr builder', _) = runXml uriMap attrs
        in builder' <> fromString "\n>"
 
 instance AddChildren (Xml Elem) where
-    addChildren elems builder uriMap =
-       let (Elem builder', _) = runXml uriMap elems (Elem $ builder <> (fromString "\n>"))
-       in builder'
+    addChildren elems uriMap =
+       let (Elem builder', _) = runXml uriMap elems
+       in fromString "\n>" `mappend` builder'
 
 instance AddChildren (Xml Attr, Xml Elem) where
-    addChildren (attrs, elems) builder uriMap =
-        let (Attr builder', uriMap') = runXml uriMap attrs (Attr builder)
-            (Elem builder'', _) = runXml uriMap' elems (Elem $ builder' <> (fromString "\n>"))
-        in builder''
+    addChildren (attrs, elems) uriMap =
+        let (Attr builder, uriMap') = runXml uriMap attrs
+            (Elem builder', _) = runXml uriMap' elems
+        in builder `mappend` fromString "\n>" `mappend` builder'
 
 class AddChildren c => MkElem n c where
     type MkElemRes n c
@@ -268,7 +269,7 @@ instance MkEmptyElem Namespace where
     xelemEmpty ns name = xelemQ ns name (mempty :: Xml Elem)
 
 xelemQ :: AddChildren c => Namespace -> String -> c -> Xml Elem
-xelemQ ns' name children = Xml $ \(Elem buffer) ->
+xelemQ ns' name children = Xml $
     do oldUriMap <- ask
        let (ns, uriMap, newNs) = genValidNsForDesiredPrefix oldUriMap ns'
        let elemNameBuilder =
@@ -281,14 +282,14 @@ xelemQ ns' name children = Xml $ \(Elem buffer) ->
                  let nsDeclaration' = fromString " xmlns:" `mappend` fromString p `mappend` fromString "=\""
                                       `mappend` fromString u `mappend` fromString "\""
                  in if newNs then nsDeclaration' else mempty
-       let b1 = mappend buffer $ fromString "<"
+       let b1 = fromString "<"
        let b2 = b1 `mappend` elemNameBuilder `mappend` nsDeclBuilder
-       let b3 = addChildren children b2 uriMap
+       let b3 = b2 `mappend` addChildren children uriMap
        let builderOut = Elem (b3 `mappend` fromString "</" `mappend` elemNameBuilder `mappend` fromString "\n>")
        return (builderOut, oldUriMap)
 
 xelems :: [Xml Elem] -> Xml Elem
-xelems = foldl mappend noElems
+xelems = foldr mappend noElems
 
 noElems :: Xml Elem
 noElems = xempty
@@ -298,11 +299,11 @@ xelemWithText n t = xelem n (xtext t)
 
 instance Monoid (Xml Elem) where
     mempty = noElems
-    mappend x1 x2 = Xml $ \t ->
-        do nsEnv <- ask
-           let t2 = fst $ runXml nsEnv x1 t
-               t3 = fst $ runXml nsEnv x2 t2
-           return (t3, nsEnv)
+    mappend x1 x2 = Xml $
+        do env <- ask
+           let (Elem b1, env') = runXml env x1
+               (Elem b2, env'') = runXml env' x2
+           return (Elem $ b1 `mappend` b2, env'')
 
 --
 -- Other XML constructs
@@ -310,31 +311,43 @@ instance Monoid (Xml Elem) where
 
 -- content is escaped
 xtext :: TextContent t => t -> Xml Elem
-xtext content = append $ textBuilder content
+xtext content = Xml $
+    do env <- ask
+       return (Elem $ textBuilder content, env)
 
 -- content is NOT escaped
 xtextRaw :: RawTextContent t => t -> Xml Elem
-xtextRaw content = append $ rawTextBuilder content
+xtextRaw content = Xml $
+    do env <- ask
+       return (Elem $ rawTextBuilder content, env)
 
 -- no escaping performed
 xentityRef :: String -> Xml Elem
-xentityRef name = append $ fromChar '&' <> fromString name <> fromChar ';'
+xentityRef name = Xml $
+    do env <- ask
+       return (Elem $ fromChar '&' <> fromString name <> fromChar ';', env)
 
 class Renderable t => Misc t where
     -- no escaping performed
     xprocessingInstruction :: String -> String -> Xml t
-    xprocessingInstruction target content =
-        append $ fromString "<?" <>
-                 fromString target <>
-                 fromChar ' ' <>
-                 fromString content <>
-                 fromString "?>"
+    xprocessingInstruction target content = Xml $
+        do env <- ask
+           return (mkRenderable $
+                   fromString "<?" <>
+                   fromString target <>
+                   fromChar ' ' <>
+                   fromString content <>
+                   fromString "?>",
+                   env)
     -- no escaping performed
     xcomment :: String -> Xml t
-    xcomment content =
-        append $ fromString "<!--" <>
-                 fromString content <>
-                 fromString "-->"
+    xcomment content = Xml $
+        do env <- ask
+           return (mkRenderable $
+                   fromString "<!--" <>
+                   fromString content <>
+                   fromString "-->",
+                   env)
 
 instance Misc Elem
 instance Misc Doc
@@ -356,6 +369,9 @@ infixl 5 <#>
 
 class XmlOutput t where
     fromBuilder :: Builder -> t
+
+instance XmlOutput Builder where
+    fromBuilder b = b
 
 instance XmlOutput BS.ByteString where
     fromBuilder = toByteString
@@ -382,7 +398,7 @@ instance Renderable Doc where
 xrender :: (Renderable r, XmlOutput t) => Xml r -> t
 xrender r = fromBuilder $ builder r'
     where
-      r' = fst $ runXml emptyNsEnv r (mkRenderable mempty)
+      r' = fst $ runXml emptyNsEnv r
 
 --
 -- Utilities
@@ -407,11 +423,30 @@ genValidNsForDesiredPrefix env ns =
                  then prefix
                  else genValidPrefix env ('_':prefix) uri
 
-append :: Renderable t => Builder -> Xml t
-append builder' = Xml $ \t ->
-    do nsEnv <- ask
-       return $ (mkRenderable (builder t <> builder'), nsEnv)
-
+{-# SPECIALIZE INLINE genericEscape ::
+     ((Char -> String -> String) -> String -> String -> String)
+  -> (String -> String -> String)
+  -> (Char -> String -> String)
+  -> String
+  -> String #-}
+{-# SPECIALIZE INLINE genericEscape ::
+     ((Char -> T.Text -> T.Text) -> T.Text -> T.Text -> T.Text)
+  -> (T.Text -> T.Text -> T.Text)
+  -> (Char -> T.Text -> T.Text)
+  -> T.Text
+  -> T.Text #-}
+{-# SPECIALIZE INLINE genericEscape ::
+     ((Char -> TL.Text -> TL.Text) -> TL.Text -> TL.Text -> TL.Text)
+  -> (TL.Text -> TL.Text -> TL.Text)
+  -> (Char -> TL.Text -> TL.Text)
+  -> TL.Text
+  -> TL.Text #-}
+genericEscape :: (S.IsString s)
+              => ((Char -> s -> s) -> s -> s -> s)
+              -> (s -> s -> s)
+              -> (Char -> s -> s)
+              -> s
+              -> s
 genericEscape foldr showString' showChar x = foldr escChar (S.fromString "") x
     where
       -- copied from xml-light
