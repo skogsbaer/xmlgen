@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, BangPatterns #-}
 module Text.XML.Generator (
 
     Xml, Doc, DocInfo, Elem, Attr, Namespace, Prefix, Uri
@@ -63,10 +63,10 @@ data Namespace
 ns :: Prefix -> Uri -> Namespace
 ns = QualifiedNamespace
 
-type NsEnv = Map.Map Prefix Uri
+newtype NsEnv = NsEnv { unNsEnv :: Map.Map Prefix Uri }
 
 emptyNsEnv :: NsEnv
-emptyNsEnv = Map.empty
+emptyNsEnv = NsEnv Map.empty
 
 newtype Xml t = Xml { unXml :: Reader NsEnv (t, NsEnv) }
 
@@ -271,7 +271,7 @@ instance MkEmptyElem Namespace where
 xelemQ :: AddChildren c => Namespace -> String -> c -> Xml Elem
 xelemQ ns' name children = Xml $
     do oldUriMap <- ask
-       let (ns, uriMap, newNs) = genValidNsForDesiredPrefix oldUriMap ns'
+       let (ns, !uriMap, newNs) = oldUriMap `seq` genValidNsForDesiredPrefix oldUriMap ns'
        let elemNameBuilder =
                case ns of
                  DefaultNamespace -> fromString name
@@ -405,23 +405,22 @@ xrender r = fromBuilder $ builder r'
 --
 
 genValidNsForDesiredPrefix :: NsEnv -> Namespace -> (Namespace, NsEnv, Bool)
-genValidNsForDesiredPrefix env ns =
+genValidNsForDesiredPrefix env@(NsEnv map) ns =
     case ns of
       DefaultNamespace -> (ns, env, False)
       QualifiedNamespace p u ->
-          let validPrefix = genValidPrefix env p u
+          let validPrefix = genValidPrefix map p u
           in (QualifiedNamespace validPrefix u
-             ,Map.insert validPrefix u env
-             ,not $ Map.member validPrefix env)
+             ,NsEnv $ Map.insert validPrefix u map
+             ,not $ Map.member validPrefix map)
     where
-      genValidPrefix :: NsEnv -> Prefix -> Uri -> Prefix
-      genValidPrefix env prefix uri =
-        case Map.lookup prefix env of
+      genValidPrefix map prefix uri =
+        case Map.lookup prefix map of
           Nothing -> prefix
           Just foundUri ->
               if foundUri == uri
                  then prefix
-                 else genValidPrefix env ('_':prefix) uri
+                 else genValidPrefix map ('_':prefix) uri
 
 {-# SPECIALIZE INLINE genericEscape ::
      ((Char -> String -> String) -> String -> String -> String)
