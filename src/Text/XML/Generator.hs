@@ -8,8 +8,6 @@ import Data.Monoid
 import Blaze.ByteString.Builder
 import Blaze.ByteString.Builder.Char.Utf8
 
-import Debug.Trace
-
 newtype Out t = Out { outBuf :: Builder }
 data ATTR = ATTR
 data ELEM = ELEM
@@ -105,9 +103,6 @@ xelemQ ns' name attrs elems (Out buffer)
       let endOut = Out (mconcat [elemsBuffer, fromString "</", elemNameBuilder, fromString "\n>"])
       return (endOut, uriMapAttrs)
 
-eTrace :: (Show a) => a -> a
-eTrace a = trace ("TRACE: " ++ (show a)) a
-
 isDefaultNamespace :: Namespace -> Bool
 isDefaultNamespace (DefaultNamespace) = True
 isDefaultNamespace _ = False
@@ -141,7 +136,7 @@ xtext content (Out buffer)
       return (t3, state'')
 
 genValidNsForDesiredPrefix :: OutEnv -> Namespace -> (Namespace, OutEnv, Bool)
-genValidNsForDesiredPrefix env ns = eTrace $
+genValidNsForDesiredPrefix env ns =
     case ns of
          DefaultNamespace -> (ns, env, False)
          QualifiedNamespace p u -> ( QualifiedNamespace validPrefix u
@@ -159,7 +154,7 @@ genValidPrefix env prefix uri =
                  in if foundUri == uri then prefix else genValidPrefix env nextPrefix uri
 
 followingPrefix :: Prefix -> Prefix
-followingPrefix p = eTrace $ '_':p
+followingPrefix p = '_':p
 
 xrender :: Trans Elem -> Builder
 xrender elem = buffer
