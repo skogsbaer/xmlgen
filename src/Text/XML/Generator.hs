@@ -19,7 +19,6 @@ data ELEM = ELEM
 type Attr = Out ATTR
 type Elem = Out ELEM
 
-
 type Prefix = String
 type Uri = String
 data Namespace
@@ -32,21 +31,14 @@ type OutEnv = Map.Map Prefix Uri
 type Xml t = t -> Reader OutEnv (t, OutEnv)
 
 {-
-class XmlGen t where
-    xattr :: String -> String -> t ATTR -> t ATTR
-    xelem :: String -> (t ATTR -> t ATTR) -> (t ELEM-> t ELEM) -> t ELEM -> t ELEM
+TODO:
 
-instance XmlGen Out where
-  -}
-
-{-
 - Escaping
 - rawText
 - comments
 - processing instructions
 - Xml header
 - syntactic sugar for elements with no attributes/children
-- namespaces
 -}
 
 xattr :: String -> String -> Xml Attr
@@ -60,122 +52,107 @@ xelems = foldl (<#>) xempty
 
 xattrQ :: Namespace -> String -> String -> Xml Attr
 xattrQ ns' key value (Out buffer) =
-    do
-        uriMap' <- ask
-        let (ns, uriMap, newNs) = genValidNsForDesiredPrefix uriMap' ns'
-        let builder = case ns of
-                        DefaultNamespace -> mconcat [ spaceBuilder, keyBuilder, startBuilder
-                                                    , valueBuilder, endBuilder]
-                        QualifiedNamespace p u ->
-                            case newNs of
-                                 False -> mconcat [ spaceBuilder, prefixBuilder, colonBuilder
-                                                  , keyBuilder, startBuilder
-                                                  , valueBuilder, endBuilder]
-                                 True -> mconcat [ spaceBuilder, nsDeclStartBuilder, colonBuilder
-                                                 , prefixBuilder, startBuilder, uriBuilder
-                                                 , endBuilder, spaceBuilder, prefixBuilder
-                                                 , colonBuilder, keyBuilder, startBuilder
-                                                 , valueBuilder, endBuilder]
-                              where
-                                nsDeclStartBuilder = fromString "xmlns"
-                                uriBuilder = fromString u
-                                prefixBuilder = fromString p
-                                colonBuilder = fromString ":"
-        return $ (Out (mconcat [buffer, builder]), uriMap)
-        where
-          spaceBuilder = fromString " "
-          keyBuilder = fromString key
-          valueBuilder = fromString value
-          startBuilder = fromString "=\""
-          endBuilder = fromString "\""
+    do uriMap' <- ask
+       let (ns, uriMap, newNs) = genValidNsForDesiredPrefix uriMap' ns'
+           builder = case ns of
+                       DefaultNamespace -> mconcat [spaceBuilder, keyBuilder, startBuilder
+                                                   ,valueBuilder, endBuilder]
+                       QualifiedNamespace p u ->
+                           let uriBuilder = fromString u
+                               prefixBuilder = fromString p
+                           in if newNs
+                                 then mconcat [spaceBuilder, nsDeclStartBuilder, colonBuilder
+                                              ,prefixBuilder, startBuilder, uriBuilder
+                                              ,endBuilder, spaceBuilder, prefixBuilder
+                                              ,colonBuilder, keyBuilder, startBuilder
+                                              ,valueBuilder, endBuilder]
+                                  else mconcat [spaceBuilder, prefixBuilder, colonBuilder
+                                               ,keyBuilder, startBuilder
+                                               ,valueBuilder, endBuilder]
+       return $ (Out (mconcat [buffer, builder]), uriMap)
+    where
+      spaceBuilder = fromString " "
+      keyBuilder = fromString key
+      startBuilder = fromString "=\""
+      valueBuilder = fromString value
+      endBuilder = fromString "\""
+      nsDeclStartBuilder = fromString "xmlns"
+      colonBuilder = fromString ":"
 
 xelemQ :: Namespace -> String -> Xml Attr -> Xml Elem -> Xml Elem
-xelemQ ns' name attrs elems (Out buffer)
-  = do
-      oldUriMap <- ask
-      let (ns, uriMap, newNs) = genValidNsForDesiredPrefix oldUriMap ns'
-      let elemNameBuilder = case ns of
-            DefaultNamespace -> fromString name
-            (QualifiedNamespace p u) -> mconcat [fromString p, fromString ":", fromString name]
-      let nsDeclBuilder = case ns of
-            DefaultNamespace -> mempty
-            (QualifiedNamespace p u) -> nsDeclaration
-              where nsDeclaration = if newNs then nsDeclaration' else mempty
-                    nsDeclaration' = mconcat [fromString " xmlns:", fromString p, fromString "=\""
-                        , fromString u, fromString "\""]
-      let startBuffer = mappend buffer $ fromString "<"
-      let startBuilder = mconcat [startBuffer, elemNameBuilder, nsDeclBuilder]
-
-      let (Out attrsBuffer, uriMapAttrs) = flip runReader uriMap $ attrs (Out startBuilder)
-      let (Out elemsBuffer) = fst $ flip runReader uriMapAttrs $ elems (Out $ mappend attrsBuffer (fromString "\n>"))
-      let endOut = Out (mconcat [elemsBuffer, fromString "</", elemNameBuilder, fromString "\n>"])
-      return (endOut, uriMapAttrs)
-
-isDefaultNamespace :: Namespace -> Bool
-isDefaultNamespace (DefaultNamespace) = True
-isDefaultNamespace _ = False
-
-getPrefix :: Namespace -> Prefix
-getPrefix (QualifiedNamespace p _) = p
-getPrefix _ = error "error!"
-
-getUri :: Namespace -> Uri
-getUri (QualifiedNamespace _ u) = u
-getUri _ = error "error!"
+xelemQ ns' name attrs elems (Out buffer) =
+    do oldUriMap <- ask
+       let (ns, uriMap, newNs) = genValidNsForDesiredPrefix oldUriMap ns'
+       let elemNameBuilder =
+               case ns of
+                 DefaultNamespace -> fromString name
+                 (QualifiedNamespace p u) -> mconcat [fromString p, fromString ":", fromString name]
+       let nsDeclBuilder = case ns of
+             DefaultNamespace -> mempty
+             (QualifiedNamespace p u) ->
+                 let nsDeclaration' = mconcat [fromString " xmlns:", fromString p, fromString "=\""
+                                              ,fromString u, fromString "\""]
+                 in if newNs then nsDeclaration' else mempty
+       let startBuffer = mappend buffer $ fromString "<"
+       let startBuilder = mconcat [startBuffer, elemNameBuilder, nsDeclBuilder]
+       let (Out attrsBuffer, uriMapAttrs) = flip runReader uriMap $ attrs (Out startBuilder)
+       let (Out elemsBuffer) = fst $ flip runReader uriMapAttrs $ elems (Out $ mappend attrsBuffer (fromString "\n>"))
+       let endOut = Out (mconcat [elemsBuffer, fromString "</", elemNameBuilder, fromString "\n>"])
+       return (endOut, uriMapAttrs)
 
 xtext :: String -> Xml Elem
-xtext content (Out buffer)
- = return $ (Out (buffer `mappend` fromString content), error "uriMap of element evaluated")
+xtext content (Out buffer) =
+    return $ (Out (buffer `mappend` fromString content), error "uriMap of element evaluated")
 
 (<#>) :: Xml Elem -> Xml Elem -> Xml Elem
-(<#>) comb1 comb2 t
-  = do
-      state <- ask
-      let t2 = fst $ runReader (comb1 t) state
-          t3 = fst $ runReader (comb2 t2) state
-      return (t3, error "uriMap of element evaluated")
+(<#>) comb1 comb2 t =
+    do state <- ask
+       let t2 = fst $ runReader (comb1 t) state
+           t3 = fst $ runReader (comb2 t2) state
+       return (t3, error "uriMap of element evaluated")
 
 (<@>) :: Xml Attr -> Xml Attr -> Xml Attr
-(<@>) comb1 comb2 t
-  = do
-      state <- ask
-      let (t2, state') = runReader (comb1 t) state
-          (t3, state'') = runReader (comb2 t2) state'
-      return (t3, state'')
+(<@>) comb1 comb2 t =
+    do state <- ask
+       let (t2, state') = runReader (comb1 t) state
+           (t3, state'') = runReader (comb2 t2) state'
+       return (t3, state'')
 
 genValidNsForDesiredPrefix :: OutEnv -> Namespace -> (Namespace, OutEnv, Bool)
 genValidNsForDesiredPrefix env ns =
     case ns of
-         DefaultNamespace -> (ns, env, False)
-         QualifiedNamespace p u -> ( QualifiedNamespace validPrefix u
-                                   , Map.insert validPrefix u env
-                                   , not $ Map.member validPrefix env
-                                   )
-           where validPrefix = genValidPrefix env p u
-
-genValidPrefix :: OutEnv -> Prefix -> Uri -> Prefix
-genValidPrefix env prefix uri =
-    case Map.member prefix env of
-         False -> prefix
-         True -> let foundUri = Map.findWithDefault nextPrefix prefix env
-                     nextPrefix = followingPrefix prefix
-                 in if foundUri == uri then prefix else genValidPrefix env nextPrefix uri
-
-followingPrefix :: Prefix -> Prefix
-followingPrefix p = '_':p
+      DefaultNamespace -> (ns, env, False)
+      QualifiedNamespace p u ->
+          let validPrefix = genValidPrefix env p u
+          in (QualifiedNamespace validPrefix u
+             ,Map.insert validPrefix u env
+             ,not $ Map.member validPrefix env)
+    where
+      genValidPrefix :: OutEnv -> Prefix -> Uri -> Prefix
+      genValidPrefix env prefix uri =
+        case Map.lookup prefix env of
+          Nothing -> prefix
+          Just foundUri ->
+              if foundUri == uri
+                 then prefix
+                 else genValidPrefix env ('_':prefix) uri
 
 xrender :: Xml Elem -> BSL.ByteString
 xrender elem = toLazyByteString buffer
   where
-  (Out buffer) = fst $ runReader (elem (Out $ mempty)) emptyState
+    (Out buffer) = fst $ runReader (elem (Out $ mempty)) emptyState
 
 emptyState :: OutEnv
 emptyState = Map.empty
 
 xempty :: Xml t
-xempty t = do
-    env <- ask
-    return (t, env)
+xempty t =
+    do env <- ask
+       return (t, env)
+
+--
+-- Tests
+--
 
 test :: IO ()
 test = BSL.putStr $ xrender xsample
@@ -199,6 +176,3 @@ xsample =
                <#>
                xelemQ _NS_PR1_NS1_ "bar" xempty
                    (xelemQ _NS_PR1_NS3_ "spam" xempty (xelem "egg" xempty xempty <#> xtext "this is spam!")))
-
-
--- sample (Out "")
