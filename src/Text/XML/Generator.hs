@@ -208,7 +208,7 @@ xattrQRaw' ns' key valueBuilder = Xml $
       colonBuilder = fromString ":"
 
 xattrs :: [Xml Attr] -> Xml Attr
-xattrs = foldl mappend noAttrs
+xattrs = foldr mappend noAttrs
 
 noAttrs :: Xml Attr
 noAttrs = xempty
