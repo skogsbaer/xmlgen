@@ -294,7 +294,6 @@ xelems = foldr mappend noElems
 noElems :: Xml Elem
 noElems = xempty
 
--- xelemWithText :: MkElem n (Xml Elem) => n -> String -> Xml Elem
 xelemWithText n t = xelem n (xtext t)
 
 instance Monoid (Xml Elem) where
