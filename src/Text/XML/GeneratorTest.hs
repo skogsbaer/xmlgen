@@ -1,4 +1,10 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -F -pgmF htfpp #-}
+{-# OPTIONS_GHC -fno-warn-overlapping-patterns #-}
+
+import Prelude hiding (catch)
+
+import Control.Exception (catch, SomeException)
 
 import System.Process
 import System.Posix.Temp
@@ -26,14 +32,14 @@ import Text.XML.Generator
 test :: Renderable r => FilePath -> Xml r -> IO ()
 test f x = BSL.writeFile f (xrender x)
 
-_NS_PR1_NS1_ = ns "foo" "urn:foo"
-_NS_PR4_NS1_ = ns "___foo" "urn:foo"
-_NS_PR2_NS2_ = ns "_foo" "urn:_foo"
-_NS_PR3_NS3_ = ns "__foo" "urn:__foo"
-_NS_PR1_NS3_ = ns "foo" "urn:bar"
+_NS_PR1_NS1_ = namespace "foo" "urn:foo"
+_NS_PR4_NS1_ = namespace "___foo" "urn:foo"
+_NS_PR2_NS2_ = namespace "_foo" "urn:_foo"
+_NS_PR3_NS3_ = namespace "__foo" "urn:__foo"
+_NS_PR1_NS3_ = namespace "foo" "urn:bar"
 
 testNS :: Namespace
-testNS = ns "foo" "http://www.example.com"
+testNS = namespace "foo" "http://www.example.com"
 
 xsample1 :: Xml Elem
 xsample1 =
@@ -70,16 +76,44 @@ xsample3 =
     doc defaultDocInfo $ xelem "foo" $ xattr "key" "val\"'&<>ue" <#> xtext "<&;'"
 
 test_3 =
-    do out <- runXmllint xsample2
-       exp <- readExpected "2.xml"
+    do out <- runXmllint xsample3
+       exp <- readExpected "3.xml"
        assertEqual exp out
 
-readExpected name = readFile ("test" </> name)
+xsample4 :: Xml Elem
+xsample4 =
+    xelem ns "x" (attrs <#>
+                  xelem noNamespace "y" (attrs <#> xelem ns "z" attrs))
+    where
+      attrs = xattr ns "a" "in URI" <>
+              xattr noNamespace "b" "in no ns" <>
+              xattr defaultNamespace "c" "in default ns"
+      ns = namespace "" "http://URI"
+
+test_4 =
+    do out <- runXmllint xsample4
+       exp <- readExpected "4.xml"
+       assertEqual exp out
+
+xhtmlSample :: Xml Elem
+xhtmlSample =
+    xhtmlRootElem "de" (xelem "head" (xelem "title" "Test") <> xelem "body" (xattr "foo" "1"))
+
+test_xhtml =
+    do out <- runXmllint xhtmlSample
+       exp <- readExpected "xhtml.xml"
+       assertEqual exp out
+
+readExpected name =
+    readFile ("test" </> name)
+    `catch` (\(e::SomeException) -> do hPutStrLn stderr (show e)
+                                       return "")
 
 runXmllint :: Renderable r => Xml r -> IO String
 runXmllint x =
     do (name, handle) <- mkstemp "/tmp/xmlgen-test-XXXXXX"
-       BSL.hPut handle (xrender x)
+       let rx = xrender x
+       BSL.hPut handle rx
        hClose handle
        readProcess "xmllint" ["--format", name] ""
 

@@ -1,13 +1,14 @@
-{-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, BangPatterns #-}
+{-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, BangPatterns,
+             UndecidableInstances, OverlappingInstances #-}
 module Text.XML.Generator (
 
     Xml, Doc, DocInfo, Elem, Attr, Namespace, Prefix, Uri
 
   , XmlOutput, Renderable
 
-  , ns, doc, defaultDocInfo
-  , xattr, xattrRaw, xattrQ, xattrQRaw, xattrs
-  , xelem, xelemEmpty, xelems, xelemQ
+  , namespace, noNamespace, defaultNamespace, doc, defaultDocInfo
+  , xattr, xattrRaw, xattrQ, xattrQRaw, xattrs, noAttrs
+  , xelem, xelemEmpty, xelems, xelemQ, noElems
   , xtext, xtextRaw, xentityRef, xprocessingInstruction, xcomment, xempty
   , xrender
 
@@ -53,20 +54,32 @@ newtype Attr = Attr { unAttr :: Builder }
 newtype Doc = Doc { unDoc :: Builder }
 
 type Prefix = String
-type Uri = String
+type Uri = String -- must not be empty
 
 data Namespace
-    = DefaultNamespace
+    = NoNamespace
+    | DefaultNamespace
     | QualifiedNamespace Prefix Uri
     deriving (Show, Eq)
 
-ns :: Prefix -> Uri -> Namespace
-ns = QualifiedNamespace
+namespace :: Prefix -> Uri -> Namespace
+namespace p u = if null u
+            then error "Text.XML.Generator.ns: namespace URI must not be empty"
+            else QualifiedNamespace p u
 
-newtype NsEnv = NsEnv { unNsEnv :: Map.Map Prefix Uri }
+noNamespace :: Namespace
+noNamespace = NoNamespace
+
+-- for elements: the namespace currently mapped to the empty prefix
+-- for attributes: no namespace
+defaultNamespace :: Namespace
+defaultNamespace = DefaultNamespace
+
+data NsEnv = NsEnv { ne_namespaceMap :: Map.Map Prefix Uri
+                   , ne_noNamespaceInUse :: Bool }
 
 emptyNsEnv :: NsEnv
-emptyNsEnv = NsEnv Map.empty
+emptyNsEnv = NsEnv Map.empty False
 
 newtype Xml t = Xml { unXml :: Reader NsEnv (t, NsEnv) }
 
@@ -106,8 +119,8 @@ doc di rootElem = Xml $
        env <- ask
        let Doc preBuf = fst $ runXml env preMisc
            Elem elemBuf = fst $ runXml env rootElem
-           postBuf = fst $ runXml env postMisc
-       return $ (postBuf, env)
+           Doc postBuf = fst $ runXml env postMisc
+       return $ (Doc $ prologBuf `mappend` preBuf `mappend` elemBuf `mappend` postBuf, env)
     where
        standalone = docInfo_standalone di
        mDocType = docInfo_docType di
@@ -182,22 +195,24 @@ xattrQRaw ns key value = xattrQRaw' ns key (rawTextBuilder value)
 xattrQRaw' :: Namespace -> String -> Builder -> Xml Attr
 xattrQRaw' ns' key valueBuilder = Xml $
     do uriMap' <- ask
-       let (ns, uriMap, newNs) = genValidNsForDesiredPrefix uriMap' ns'
-           builder = case ns of
-                       DefaultNamespace -> spaceBuilder `mappend` keyBuilder `mappend` startBuilder
-                                           `mappend` valueBuilder `mappend` endBuilder
-                       QualifiedNamespace p u ->
-                           let uriBuilder = fromString u
-                               prefixBuilder = fromString p
-                           in if newNs
-                                 then spaceBuilder `mappend` nsDeclStartBuilder `mappend` colonBuilder
-                                      `mappend` prefixBuilder `mappend` startBuilder `mappend` uriBuilder
-                                      `mappend` endBuilder `mappend` spaceBuilder `mappend` prefixBuilder
-                                      `mappend` colonBuilder `mappend` keyBuilder `mappend` startBuilder
-                                      `mappend` valueBuilder `mappend` endBuilder
-                                  else spaceBuilder `mappend` prefixBuilder `mappend` colonBuilder
-                                       `mappend` keyBuilder `mappend` startBuilder
-                                       `mappend` valueBuilder `mappend` endBuilder
+       let (mDecl, prefix, uriMap) = extendNsEnv True uriMap' ns'
+           nsDeclBuilder =
+               case mDecl of
+                 Nothing -> mempty
+                 Just (p, u) ->
+                     let uriBuilder = fromString u
+                         prefixBuilder =
+                             if null p then mempty else colonBuilder `mappend` fromString p
+                     in spaceBuilder `mappend` nsDeclStartBuilder
+                        `mappend` prefixBuilder `mappend` startBuilder `mappend` uriBuilder
+                        `mappend` endBuilder
+           prefixBuilder =
+               if null prefix
+                  then spaceBuilder
+                  else spaceBuilder `mappend` fromString prefix `mappend` colonBuilder
+           builder = nsDeclBuilder `mappend` prefixBuilder `mappend`
+                     keyBuilder `mappend` startBuilder `mappend`
+                     valueBuilder `mappend` endBuilder
        return $ (Attr builder, uriMap)
     where
       spaceBuilder = fromString " "
@@ -244,6 +259,12 @@ instance AddChildren (Xml Attr, Xml Elem) where
             (Elem builder', _) = runXml uriMap' elems
         in builder `mappend` fromString "\n>" `mappend` builder'
 
+instance TextContent t => AddChildren t where
+    addChildren t _ = fromChar '>' <> textBuilder t
+
+instance AddChildren () where
+    addChildren _ _ = fromChar '>'
+
 class AddChildren c => MkElem n c where
     type MkElemRes n c
     xelem :: n -> MkElemRes n c
@@ -271,17 +292,19 @@ instance MkEmptyElem Namespace where
 xelemQ :: AddChildren c => Namespace -> String -> c -> Xml Elem
 xelemQ ns' name children = Xml $
     do oldUriMap <- ask
-       let (ns, !uriMap, newNs) = oldUriMap `seq` genValidNsForDesiredPrefix oldUriMap ns'
+       let (mDecl, prefix,!uriMap) = oldUriMap `seq` extendNsEnv False oldUriMap ns'
        let elemNameBuilder =
-               case ns of
-                 DefaultNamespace -> fromString name
-                 (QualifiedNamespace p u) -> fromString p `mappend` fromString ":" `mappend` fromString name
-       let nsDeclBuilder = case ns of
-             DefaultNamespace -> mempty
-             (QualifiedNamespace p u) ->
-                 let nsDeclaration' = fromString " xmlns:" `mappend` fromString p `mappend` fromString "=\""
-                                      `mappend` fromString u `mappend` fromString "\""
-                 in if newNs then nsDeclaration' else mempty
+               if null prefix
+                  then fromString name
+                  else fromString prefix `mappend` fromString ":" `mappend` fromString name
+       let nsDeclBuilder =
+               case mDecl of
+                 Nothing -> mempty
+                 Just (p, u) ->
+                     let prefixBuilder =
+                             if null p then mempty else fromChar ':' `mappend` fromString p
+                     in fromString " xmlns" `mappend` prefixBuilder `mappend` fromString "=\""
+                        `mappend` fromString u `mappend` fromString "\""
        let b1 = fromString "<"
        let b2 = b1 `mappend` elemNameBuilder `mappend` nsDeclBuilder
        let b3 = b2 `mappend` addChildren children uriMap
@@ -353,6 +376,7 @@ instance Misc Doc
 
 --
 -- Operators
+--
 
 infixl 6 <>
 (<>) :: Monoid t => t -> t -> t
@@ -403,22 +427,31 @@ xrender r = fromBuilder $ builder r'
 -- Utilities
 --
 
-genValidNsForDesiredPrefix :: NsEnv -> Namespace -> (Namespace, NsEnv, Bool)
-genValidNsForDesiredPrefix env@(NsEnv map) ns =
+extendNsEnv :: Bool -> NsEnv -> Namespace -> (Maybe (Prefix, Uri), Prefix, NsEnv)
+extendNsEnv isAttr env ns =
     case ns of
-      DefaultNamespace -> (ns, env, False)
-      QualifiedNamespace p u ->
-          let validPrefix = genValidPrefix map p u
-          in (QualifiedNamespace validPrefix u
-             ,NsEnv $ Map.insert validPrefix u map
-             ,not $ Map.member validPrefix map)
+      NoNamespace
+          | isAttr -> (Nothing, "", env)
+          | otherwise ->
+              case Map.lookup "" (ne_namespaceMap env) of
+                Nothing ->  -- empty prefix not in use
+                  (Nothing, "", env { ne_noNamespaceInUse = True })
+                Just uri -> -- empty prefix mapped to uri
+                  (Just ("", ""), "", env { ne_namespaceMap = Map.delete "" (ne_namespaceMap env)
+                                          , ne_noNamespaceInUse = True })
+      DefaultNamespace ->
+          (Nothing, "", env)
+      QualifiedNamespace p' u ->
+          let p = if null p' && (isAttr || ne_noNamespaceInUse env) then "_" else p'
+              (mDecl, prefix, newMap) = genValidPrefix (ne_namespaceMap env) p u
+          in (mDecl, prefix, env { ne_namespaceMap = newMap })
     where
       genValidPrefix map prefix uri =
         case Map.lookup prefix map of
-          Nothing -> prefix
+          Nothing -> (Just (prefix, uri), prefix, Map.insert prefix uri map)
           Just foundUri ->
               if foundUri == uri
-                 then prefix
+                 then (Nothing, prefix, map)
                  else genValidPrefix map ('_':prefix) uri
 
 {-# SPECIALIZE INLINE genericEscape ::
@@ -490,7 +523,7 @@ xhtmlFramesetDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeFrame
 
 xhtmlRootElem :: String -> Xml Elem -> Xml Elem
 xhtmlRootElem lang children =
-    xelem "html" (xattr "xmlns" "http://www.w3.org/1999/xhtml" <>
-                  xattr "xml:lang" lang <>
-                  xattr "lang" lang <#>
-                  children)
+    xelem (namespace "" "http://www.w3.org/1999/xhtml") "html"
+          (xattr "xml:lang" lang <>
+           xattr "lang" lang <#>
+           children)
