@@ -1,12 +1,12 @@
 Name:                xmlgen
-Version:             0.4.0.0
+Version:             0.4.0.1
 Synopsis:            Fast XML generation library
 Description:         Library for high-performance XML generation.
 License:             BSD3
 License-file:        LICENSE
 Author:              Stefan Wehr, Stefan Schmidt, Johannes Weiss, David Leuschner
 Maintainer:          Stefan Wehr <wehr@factisresearch.com>
-Category:            Text
+Category:            Text, XML
 Build-type:          Simple
 Cabal-version:       >=1.6
 
