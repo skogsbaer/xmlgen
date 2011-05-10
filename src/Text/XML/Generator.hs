@@ -1,19 +1,49 @@
 {-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, BangPatterns,
              UndecidableInstances, OverlappingInstances #-}
+-- | This module provides combinators for generating XML documents.
+--
+-- As an example, suppose you want to generate the following XML document:
+--
+-- > <?xml version="1.0"?>
+-- > <people>
+-- >   <person age="32">Stefan</person>
+-- >   <person age="4">Judith</person>
+-- > </people>
+--
+-- Then you could use the following Haskell code:
+--
+--
+-- @
+-- let people = [(\"Stefan\", \"32\"), (\"Judith\", \"4\")]
+-- in 'doc' 'defaultDocInfo' $
+--      'xelem' \"people\" $
+--        'xelems' $ map (\(name, age) -> 'xelem' \"person\" ('xattr' \"age\" age '<#>' 'xtext' name)) people
+-- @
+
 module Text.XML.Generator (
 
-    Xml, Doc, DocInfo, Elem, Attr, Namespace, Prefix, Uri
-
-  , XmlOutput, Renderable
-
-  , namespace, noNamespace, defaultNamespace, doc, defaultDocInfo
-  , xattr, xattrRaw, xattrQ, xattrQRaw, xattrs, noAttrs
-  , xelem, xelemEmpty, xelems, xelemQ, noElems
-  , xtext, xtextRaw, xentityRef, xprocessingInstruction, xcomment, xempty
+  -- * General
+    Xml
+  -- * Documents
+  , Doc, DocInfo(..), doc, defaultDocInfo
+  -- * Namespaces
+  , Namespace, Prefix, Uri
+  , namespace, noNamespace, defaultNamespace
+  -- * Elements
+  , Elem, MkElem(xelem), MkEmptyElem(xelemEmpty), AddChildren
+  , xelems, noElems, xelemWithText, (<>), (<#>)
+  -- * Attributes
+  , Attr, MkAttr(xattr, xattrRaw)
+  , xattrs, noAttrs
+  -- * Text
+  , RawTextContent, TextContent
+  , xtext, xtextRaw, xentityRef
+  -- * Other
+  , xempty , Misc(xprocessingInstruction, xcomment)
+  -- * Rendering
   , xrender
-
-  , (<>), (<#>)
-
+  , XmlOutput(fromBuilder), Renderable
+  -- * XHTML documents
   , xhtmlFramesetDocInfo, xhtmlStrictDocInfo, xhtmlTransitionalDocInfo
   , xhtmlRootElem
 
@@ -49,29 +79,44 @@ import qualified Data.Text.Lazy as TL
 -- Basic definitions
 --
 
+-- | A piece of XML at the element level.
 newtype Elem = Elem { unElem :: Builder }
+
+-- | A piece of XML at the attribute level.
 newtype Attr = Attr { unAttr :: Builder }
+
+-- | A piece of XML at the document level.
 newtype Doc = Doc { unDoc :: Builder }
 
+-- | Namespace prefix.
 type Prefix = String
+
+-- | Namespace URI.
 type Uri = String -- must not be empty
 
+-- | Type for representing presence or absence of an XML namespace.
 data Namespace
     = NoNamespace
     | DefaultNamespace
     | QualifiedNamespace Prefix Uri
     deriving (Show, Eq)
 
+-- | Constructs a qualified XML namespace.
+--   The given URI must not be the empty string.
 namespace :: Prefix -> Uri -> Namespace
 namespace p u = if null u
             then error "Text.XML.Generator.ns: namespace URI must not be empty"
             else QualifiedNamespace p u
 
+-- | A 'Namespace' value denoting the absence of any XML namespace information.
 noNamespace :: Namespace
 noNamespace = NoNamespace
 
--- for elements: the namespace currently mapped to the empty prefix
--- for attributes: no namespace
+-- | A 'Namespace' value denoting the default namespace.
+--
+-- * For elements, this is the namespace currently mapped to the empty prefix.
+--
+-- * For attributes, the default namespace does not carry any namespace information.
 defaultNamespace :: Namespace
 defaultNamespace = DefaultNamespace
 
@@ -81,11 +126,14 @@ data NsEnv = NsEnv { ne_namespaceMap :: Map.Map Prefix Uri
 emptyNsEnv :: NsEnv
 emptyNsEnv = NsEnv Map.empty False
 
+-- | The type @Xml t@ represent a piece of XML of type @t@, where @t@
+--   is usually one of 'Elem', 'Attr', or 'Doc'.
 newtype Xml t = Xml { unXml :: Reader NsEnv (t, NsEnv) }
 
 runXml :: NsEnv -> Xml t -> (t, NsEnv)
 runXml nsEnv (Xml x) = runReader x nsEnv
 
+-- | An empty, polymorphic piece of XML.
 xempty :: Renderable t => Xml t
 xempty = Xml $
     do env <- ask
@@ -95,19 +143,23 @@ xempty = Xml $
 -- Document
 --
 
+-- | The 'DocInfo' type contains all information of an XML document except the root element.
 data DocInfo
     = DocInfo
-      { docInfo_standalone :: Bool
-      , docInfo_docType    :: Maybe String
-      , docInfo_preMisc    :: Xml Doc
-      , docInfo_postMisc   :: Xml Doc }
+      { docInfo_standalone :: Bool          -- ^ Value of the @standalone@ attribute in the @\<?xml ... ?\>@ header
+      , docInfo_docType    :: Maybe String  -- ^ Document type (N.B.: rendering does not escape this value)
+      , docInfo_preMisc    :: Xml Doc       -- ^ Content before the root element
+      , docInfo_postMisc   :: Xml Doc       -- ^ Content after the root element
+      }
 
+-- | The default document info (standalone, without document type, without content before/after the root element).
 defaultDocInfo :: DocInfo
 defaultDocInfo = DocInfo { docInfo_standalone = True
-                         , docInfo_docType    = Nothing -- no escaping performed
+                         , docInfo_docType    = Nothing
                          , docInfo_preMisc    = xempty
                          , docInfo_postMisc   = xempty }
 
+-- | Constructs an XML document from a 'DocInfo' value and the root element.
 doc :: DocInfo -> Xml Elem -> Xml Doc
 doc di rootElem = Xml $
     do let prologBuf = fromString "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"" <>
@@ -131,9 +183,11 @@ doc di rootElem = Xml $
 -- Text content
 --
 
+-- | Construction of text content not subject to escaping.
 class RawTextContent t where
     rawTextBuilder :: t -> Builder
 
+-- | Construction of text content subject to escaping.
 class RawTextContent t => TextContent t where
     escape :: t -> t
     textBuilder :: TextContent t => t -> Builder
@@ -167,11 +221,17 @@ instance RawTextContent BSL.ByteString where
 -- Attributes
 --
 
--- Note: attributes are quoted with "
-
+-- | Class providing methods for constructing XML attributes.
+--
+-- The 'String' instance of this class constructs an attribute with a name
+-- in the default namespace, the 'Namespace' instance allows customization
+-- of namespaces.
 class MkAttr n t where
     type MkAttrRes n t
+    -- | Construct an attribute by escaping its value
     xattr :: TextContent t => n -> MkAttrRes n t
+    -- | Construct an attribute without escaping its value.
+    -- /Note:/ attribute values are quoted with double quotes.
     xattrRaw :: RawTextContent t => n -> MkAttrRes n t
 
 instance MkAttr String t where
@@ -222,9 +282,11 @@ xattrQRaw' ns' key valueBuilder = Xml $
       nsDeclStartBuilder = fromString "xmlns"
       colonBuilder = fromString ":"
 
+-- |  Merges a list of attributes into a single piece of XML at the attribute level.
 xattrs :: [Xml Attr] -> Xml Attr
 xattrs = foldr mappend noAttrs
 
+-- | The empty attribute list.
 noAttrs :: Xml Attr
 noAttrs = xempty
 
@@ -240,6 +302,10 @@ instance Monoid (Xml Attr) where
 -- Elements
 --
 
+-- | Class for adding children to an element.
+--
+-- The various instances of this class allow the addition of different kinds
+-- of children.
 class AddChildren c where
     addChildren :: c -> NsEnv -> Builder
 
@@ -265,6 +331,11 @@ instance TextContent t => AddChildren t where
 instance AddChildren () where
     addChildren _ _ = fromChar '>'
 
+-- | Class providing methods for constructing XML elements.
+--
+-- The 'String' instance of this class constructs an element in the
+-- default namespace, the 'Namespace' instance allows customization of
+-- namespaces.
 class AddChildren c => MkElem n c where
     type MkElemRes n c
     xelem :: n -> MkElemRes n c
@@ -277,6 +348,11 @@ instance AddChildren c => MkElem Namespace c where
     type MkElemRes Namespace c = String -> c -> Xml Elem
     xelem = xelemQ
 
+-- | Class providing a method for constructing XML elements without children.
+--
+-- The 'String' instance of this class constructs an element in the
+-- default namespace, the 'Namespace' instance allows customization of
+-- namespaces.
 class MkEmptyElem n where
     type MkEmptyElemRes n
     xelemEmpty :: n -> MkEmptyElemRes n
@@ -311,12 +387,16 @@ xelemQ ns' name children = Xml $
        let builderOut = Elem (b3 `mappend` fromString "</" `mappend` elemNameBuilder `mappend` fromString "\n>")
        return (builderOut, oldUriMap)
 
+-- |  Merges a list of elements into a single piece of XML at the element level.
 xelems :: [Xml Elem] -> Xml Elem
 xelems = foldr mappend noElems
 
+-- | No elements at all.
 noElems :: Xml Elem
 noElems = xempty
 
+-- | The expression @xelemWithText n t@ constructs an XML element with name @n@ and text content @t@.
+xelemWithText :: (TextContent t) => String -> t -> Xml Elem
 xelemWithText n t = xelem n (xtext t)
 
 instance Monoid (Xml Elem) where
@@ -331,26 +411,29 @@ instance Monoid (Xml Elem) where
 -- Other XML constructs
 --
 
--- content is escaped
+-- | Constructs a text node by escaping the given argument.
 xtext :: TextContent t => t -> Xml Elem
 xtext content = Xml $
     do env <- ask
        return (Elem $ textBuilder content, env)
 
--- content is NOT escaped
+-- | Constructs a text node /without/ escaping the given argument.
 xtextRaw :: RawTextContent t => t -> Xml Elem
 xtextRaw content = Xml $
     do env <- ask
        return (Elem $ rawTextBuilder content, env)
 
--- no escaping performed
+-- | Constructs a reference to the named entity.
+-- /Note:/ no escaping is performed on the name of the entity
 xentityRef :: String -> Xml Elem
 xentityRef name = Xml $
     do env <- ask
        return (Elem $ fromChar '&' <> fromString name <> fromChar ';', env)
 
+-- | Class providing methods for adding processing instructions and comments.
 class Renderable t => Misc t where
-    -- no escaping performed
+    -- | Constructs a processing instruction with the given target and content.
+    -- /Note:/ Rendering does not perform escaping on the target and the content.
     xprocessingInstruction :: String -> String -> Xml t
     xprocessingInstruction target content = Xml $
         do env <- ask
@@ -361,7 +444,8 @@ class Renderable t => Misc t where
                    fromString content <>
                    fromString "?>",
                    env)
-    -- no escaping performed
+    -- | Constructs an XML comment.
+    -- /Note:/ No escaping is performed on the text of the comment.
     xcomment :: String -> Xml t
     xcomment content = Xml $
         do env <- ask
@@ -379,10 +463,14 @@ instance Misc Doc
 --
 
 infixl 6 <>
+-- | Shortcut for the 'mappend' functions of monoids. Used to concatenate elements, attributes
+--   and text nodes.
 (<>) :: Monoid t => t -> t -> t
 (<>) = mappend
 
 infixl 5 <#>
+-- | Shortcut for coonstructing pairs. Used in combination with 'xelem' for separating child-attributes
+--   from child-elements.
 (<#>) :: a -> b -> (a, b)
 (<#>) x y = (x, y)
 
@@ -390,7 +478,9 @@ infixl 5 <#>
 -- Rendering
 --
 
+-- | Instances of the @XmlOutput@ class may serve as target of serializing an XML document.
 class XmlOutput t where
+    -- | Creates the target type from a 'Builder'.
     fromBuilder :: Builder -> t
 
 instance XmlOutput Builder where
@@ -402,6 +492,7 @@ instance XmlOutput BS.ByteString where
 instance XmlOutput BSL.ByteString where
     fromBuilder = toLazyByteString
 
+-- | Any type subject to rendering must implement this type class.
 class Renderable t where
     builder :: t -> Builder
     mkRenderable :: Builder -> t
@@ -418,6 +509,7 @@ instance Renderable Doc where
     builder (Doc b) = b
     mkRenderable = Doc
 
+-- | Renders a given piece of XML.
 xrender :: (Renderable r, XmlOutput t) => Xml r -> t
 xrender r = fromBuilder $ builder r'
     where
@@ -500,27 +592,41 @@ genericEscape foldr showString' showChar x = foldr escChar (S.fromString "") x
 --
 -- XHTML
 --
+
+-- | Document type for XHTML 1.0 strict.
+xhtmlDoctypeStrict :: String
 xhtmlDoctypeStrict =
     "<!DOCTYPE html\n" ++
     "    PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\"\n" ++
     "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">"
 
+-- | Document info for XHTML 1.0 strict.
+xhtmlStrictDocInfo :: DocInfo
 xhtmlStrictDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeStrict }
 
+-- | Document type for XHTML 1.0 transitional.
+xhtmlDoctypeTransitional :: String
 xhtmlDoctypeTransitional =
     "<!DOCTYPE html\n" ++
     "    PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n" ++
     "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">"
 
+-- | Document info for XHTML 1.0 transitional.
+xhtmlTransitionalDocInfo :: DocInfo
 xhtmlTransitionalDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeTransitional }
 
+-- | Document type for XHTML 1.0 frameset.
+xhtmlDoctypeFrameset :: String
 xhtmlDoctypeFrameset =
     "<!DOCTYPE html\n" ++
     "    PUBLIC \"-//W3C//DTD XHTML 1.0 Frameset//EN\"\n" ++
     "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd\">"
 
+-- | Document info for XHTML 1.0 frameset.
+xhtmlFramesetDocInfo :: DocInfo
 xhtmlFramesetDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeFrameset }
 
+-- | Constructs the root element of an XHTML document.
 xhtmlRootElem :: String -> Xml Elem -> Xml Elem
 xhtmlRootElem lang children =
     xelem (namespace "" "http://www.w3.org/1999/xhtml") "html"

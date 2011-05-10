@@ -95,6 +95,19 @@ test_4 =
        exp <- readExpected "4.xml"
        assertEqual exp out
 
+xsample5 :: Xml Doc
+xsample5 =
+    doc defaultDocInfo $
+      xelem "people" $
+        xelems $ map (\(name, age) -> xelem "person" (xattr "age" age <#> xtext name)) people
+    where
+      people = [("Stefan", "32"), ("Judith", "4")]
+
+test_5 =
+    do out <- runXmllint xsample5
+       exp <- readExpected "5.xml"
+       assertEqual exp out
+
 xhtmlSample :: Xml Elem
 xhtmlSample =
     xhtmlRootElem "de" (xelem "head" (xelem "title" "Test") <> xelem "body" (xattr "foo" "1"))

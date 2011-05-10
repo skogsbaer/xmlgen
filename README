@@ -1,0 +1,8 @@
+xmlgen is a Haskell library for high-performance XML generation.
+
+Authors:  Stefan Wehr <wehr@factisresearch.com>,
+          Stefan Schmidt,
+          Johannes Weiss,
+          David Leuschner <leuschner@factisresearch.com>
+
+xmlgen is also on hackage: http://hackage.haskell.org/package/xmlgen
