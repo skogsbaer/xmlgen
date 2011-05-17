@@ -39,7 +39,7 @@ Then we continue by generating the <tt>person</tt> element.
 >     xelem "person" $ xattr "age" age <#> xtext name
 
 <p>
-The <a href="http://hackage.haskell.org/packages/archive/xmlgen/0.4.0.1/doc/html/Text-XML-Generator.html#v:xelem"><tt>xelem</tt><a/>
+The <a href="http://hackage.haskell.org/packages/archive/xmlgen/0.4.0.1/doc/html/Text-XML-Generator.html#v:xelem"><tt>xelem</tt></a>
 combinator constructs an XML element from an element name
 and from the children of the element. Xmlgen provides overloaded
 variants of <tt>xelem</tt> to support a uniform syntax for
@@ -60,7 +60,7 @@ whereas <tt>xattr</tt> has result type <tt>Xml <a href="http://hackage.haskell.o
 This distinction is important so that attributes and elements can
 not be confused. The result type of the <tt>xtext</tt> combinator
 is <tt>Xml Elem</tt>; we decided against an extra type for text nodes
-because for xmlgen's purpose text nodes and elements are almost interchangeble.
+because for xmlgen's purpose text nodes and elements are almost interchangable.
 </p>
 
 <p>
@@ -110,7 +110,7 @@ to resulting XML document as a lazy byte string:
 </p>
 
 > outputXml :: IO ()
-> outputXml = BSL.putStrLn (xrender genXml')
+> outputXml = BSL.putStrLn (xrender genXml)
 
 <p>
 Loading the current file into ghci and evaluating <tt>outputXml</tt>
@@ -131,7 +131,7 @@ produces the following result:
 
 <p>
 This blog post introduced most but not all features of the xmlgen API.
-Check out the <a href="http://hackage.haskell.org/package/xmlgen">documentation<a/>.
+Check out the <a href="http://hackage.haskell.org/package/xmlgen">documentation</a>.
 </p>
 
 <p>
