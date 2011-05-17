@@ -49,13 +49,6 @@ module Text.XML.Generator (
 
 ) where
 
-{-
-TODO:
-
-- documentation
-
--}
-
 import Prelude hiding (elem)
 import Control.Monad.Reader (Reader(..), ask, asks, runReader)
 import qualified Data.Map as Map
