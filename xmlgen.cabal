@@ -1,5 +1,5 @@
 Name:                xmlgen
-Version:             0.4.0.1
+Version:             0.4.0.2
 Synopsis:            Fast XML generation library
 Description:         Library for high-performance XML generation.
 License:             BSD3
