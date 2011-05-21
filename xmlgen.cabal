@@ -19,8 +19,7 @@ Library
   Hs-Source-Dirs:    src
   Build-Depends:     base >= 4.2 && < 4.4, blaze-builder == 0.3.*,
                      bytestring == 0.9.*, containers >= 0.3 && < 0.5,
-                     monads-tf == 0.1.*, text >= 0.10 && < 0.12,
-                     xml-types == 0.3.*
+                     monads-tf == 0.1.*, text >= 0.10 && < 0.12
   Ghc-Prof-Options: -auto-all -caf-all
 
 Flag tests
@@ -29,7 +28,7 @@ Flag tests
 
 Executable tests
   If flag(tests)
-    Build-Depends: HTF == 0.7.*, MissingH == 1.1.*, hxt == 9.0.*,
+    Build-Depends: HTF == 0.7.*, MissingH == 1.1.*, hxt == 9.1.*,
                    filepath == 1.2.*, unix == 2.4.*, process == 1.0.*
   Else
     Buildable: False
