@@ -46,6 +46,6 @@ Executable benchmarks
   Else
     Buildable: False
   Hs-Source-Dirs: src
-  Ghc-Options: -O2
+  Ghc-Options: -O2 -rtsopts
   Ghc-Prof-Options: -auto-all -caf-all
   Main-Is:        Text/XML/GeneratorBenchmarks.hs
