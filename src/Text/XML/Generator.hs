@@ -54,6 +54,7 @@ import Control.Monad.Reader (Reader(..), ask, asks, runReader)
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy as BSL
 import Data.Monoid hiding (mconcat)
+import qualified Data.Monoid as M
 
 import Blaze.ByteString.Builder
 import qualified Blaze.ByteString.Builder as Blaze
@@ -277,7 +278,7 @@ xattrQRaw' ns' key valueBuilder = Xml $
 
 -- |  Merges a list of attributes into a single piece of XML at the attribute level.
 xattrs :: [Xml Attr] -> Xml Attr
-xattrs = foldr mappend noAttrs
+xattrs = M.mconcat
 
 -- | The empty attribute list.
 noAttrs :: Xml Attr
@@ -382,7 +383,7 @@ xelemQ ns' name children = Xml $
 
 -- |  Merges a list of elements into a single piece of XML at the element level.
 xelems :: [Xml Elem] -> Xml Elem
-xelems = foldr mappend noElems
+xelems = M.mconcat
 
 -- | No elements at all.
 noElems :: Xml Elem
