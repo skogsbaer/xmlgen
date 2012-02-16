@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, BangPatterns,
-             UndecidableInstances, OverlappingInstances #-}
+             UndecidableInstances, OverlappingInstances, CPP #-}
 -- | This module provides combinators for generating XML documents.
 --
 -- As an example, suppose you want to generate the following XML document:
@@ -68,6 +68,21 @@ import qualified Data.String as S
 
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
+
+#ifdef MIN_VERSION_base
+
+#if MIN_VERSION_base(4,5,0)
+#define BASE_AT_LEAST_4_5_0_0
+#endif
+
+#else
+
+-- Fallback for ghci
+#if __GLASGOW_HASKELL__ >= 704
+#define BASE_AT_LEAST_4_5_0_0
+#endif
+
+#endif
 
 --
 -- Basic definitions
@@ -456,14 +471,17 @@ instance Misc Doc
 -- Operators
 --
 
+-- Note: (<>) is defined in Data.Monoid starting with base 4.5.0.0
+#ifndef BASE_AT_LEAST_4_5_0_0
 infixl 6 <>
 -- | Shortcut for the 'mappend' functions of monoids. Used to concatenate elements, attributes
 --   and text nodes.
 (<>) :: Monoid t => t -> t -> t
 (<>) = mappend
+#endif
 
 infixl 5 <#>
--- | Shortcut for coonstructing pairs. Used in combination with 'xelem' for separating child-attributes
+-- | Shortcut for constructing pairs. Used in combination with 'xelem' for separating child-attributes
 --   from child-elements.
 (<#>) :: a -> b -> (a, b)
 (<#>) x y = (x, y)
