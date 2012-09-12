@@ -1,3 +1,6 @@
+0.4.0.3 (2012-09-12)
+	- Fixes for GHC 7.6
+
 0.4.0.2 (2011-05-21)
 	- Use mconcat instead of 'foldr mappend mempty'
 	- Removed dependency on xml-types
