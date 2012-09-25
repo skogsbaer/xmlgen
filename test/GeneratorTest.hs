@@ -1,8 +1,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
 {-# OPTIONS_GHC -F -pgmF htfpp #-}
 {-# OPTIONS_GHC -fno-warn-overlapping-patterns #-}
 
+#if !MIN_VERSION_base(4,6,0)
 import Prelude hiding (catch)
+#endif
 
 import Control.Exception (catch, SomeException)
 
@@ -21,7 +25,6 @@ import Text.XML.HXT.Core hiding (xshow)
 import Text.XML.HXT.DOM.ShowXml (xshow)
 import Data.Tree.NTree.TypeDefs
 
-import Data.String.Utils
 import Data.String
 import qualified Data.Text as T
 
@@ -43,12 +46,12 @@ testNS = namespace "foo" "http://www.example.com"
 
 xsample1 :: Xml Elem
 xsample1 =
-  xelem _NS_PR3_NS3_ "foo"
-       (xattr _NS_PR2_NS2_ "key" "value" <>
-        xattr _NS_PR2_NS2_ "key2" "value",
-        xelem _NS_PR1_NS1_ "bar" (xattr _NS_PR2_NS2_ "key" "value" <#> xtext "BAR") <>
-        xelem _NS_PR1_NS1_ "bar"
-            (xelem _NS_PR1_NS3_ "spam" (xelemEmpty "egg" <> xtext "this is spam!")))
+  xelemQ _NS_PR3_NS3_ "foo"
+        (xattrQ _NS_PR2_NS2_ "key" "value" <>
+         xattrQ _NS_PR2_NS2_ "key2" "value",
+         xelemQ _NS_PR1_NS1_ "bar" (xattrQ _NS_PR2_NS2_ "key" "value" <#> xtext "BAR") <>
+         xelemQ _NS_PR1_NS1_ "bar"
+             (xelemQ _NS_PR1_NS3_ "spam" (xelemEmpty "egg" <> xtext "this is spam!")))
 
 test_1 =
     do out <- runXmllint xsample1
@@ -62,9 +65,9 @@ xsample2 = xelem "foo" $
                 xelemEmpty "bar" <>
                 xelem "spam" (xattr "key" "value") <>
                 xelem "egg" (xtext "ham") <>
-                xelemEmpty testNS "bar" <>
-                xelem testNS "spam" (xattr testNS "key" "value") <>
-                xelem testNS "egg" (xelemEmpty "ham")
+                xelemQEmpty testNS "bar" <>
+                xelemQ testNS "spam" (xattrQ testNS "key" "value") <>
+                xelemQ testNS "egg" (xelemEmpty "ham")
 
 test_2 =
     do out <- runXmllint xsample2
@@ -82,12 +85,12 @@ test_3 =
 
 xsample4 :: Xml Elem
 xsample4 =
-    xelem ns "x" (attrs <#>
-                  xelem noNamespace "y" (attrs <#> xelem ns "z" attrs))
+    xelemQ ns "x" (attrs <#>
+                   xelemQ noNamespace "y" (attrs <#> xelemQ ns "z" attrs))
     where
-      attrs = xattr ns "a" "in URI" <>
-              xattr noNamespace "b" "in no ns" <>
-              xattr defaultNamespace "c" "in default ns"
+      attrs = xattrQ ns "a" "in URI" <>
+              xattrQ noNamespace "b" "in no ns" <>
+              xattrQ defaultNamespace "c" "in default ns"
       ns = namespace "" "http://URI"
 
 test_4 =
@@ -156,8 +159,8 @@ prop_quotingOk (ValidXmlString s) =
              in normWsAttr s == attrValue && normWsElem s == textValue
          l -> error (show root ++ "\n" ++ show l)
     where
-      normWsAttr = replace "\r" " " . replace "\n" " " . replace "\n\r" " "
-      normWsElem = replace "\r" "\n" . replace "\n\r" "\b"
+      normWsAttr = T.unpack . T.replace "\r" " " . T.replace "\n" " " . T.replace "\n\r" " " . T.pack
+      normWsElem = T.unpack . T.replace "\r" "\n" . T.replace "\n\r" "\b" . T.pack
       childrenOfNTree (NTree _ l) = l
 
 newtype ValidXmlString = ValidXmlString String
@@ -176,4 +179,4 @@ instance Arbitrary ValidXmlString where
 
 main =
     do args <- getArgs
-       runTestWithArgs args allHTFTests
+       runTestWithArgs args htf_thisModulesTests

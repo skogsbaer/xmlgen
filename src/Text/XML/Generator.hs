@@ -30,10 +30,10 @@ module Text.XML.Generator (
   , Namespace, Prefix, Uri
   , namespace, noNamespace, defaultNamespace
   -- * Elements
-  , Elem, MkElem(xelem), MkEmptyElem(xelemEmpty), AddChildren
+  , Elem, xelem, xelemQ, xelemEmpty, xelemQEmpty, AddChildren
   , xelems, noElems, xelemWithText, (<>), (<#>)
   -- * Attributes
-  , Attr, MkAttr(xattr, xattrRaw)
+  , Attr, xattr, xattrRaw, xattrQ, xattrQRaw
   , xattrs, noAttrs
   -- * Text
   , RawTextContent, TextContent
@@ -189,6 +189,22 @@ doc di rootElem = Xml $
        postMisc = docInfo_postMisc di
 
 --
+-- Names
+--
+
+class Name n where
+    nameBuilder :: n -> Builder
+
+instance Name String where
+    nameBuilder = fromString
+
+instance Name T.Text where
+    nameBuilder = fromText
+
+instance Name TL.Text where
+    nameBuilder = fromLazyText
+
+--
 -- Text content
 --
 
@@ -230,38 +246,25 @@ instance RawTextContent BSL.ByteString where
 -- Attributes
 --
 
--- | Class providing methods for constructing XML attributes.
---
--- The 'String' instance of this class constructs an attribute with a name
--- in the default namespace, the 'Namespace' instance allows customization
--- of namespaces.
-class MkAttr n t where
-    type MkAttrRes n t
-    -- | Construct an attribute by escaping its value
-    xattr :: TextContent t => n -> MkAttrRes n t
-    -- | Construct an attribute without escaping its value.
-    -- /Note:/ attribute values are quoted with double quotes.
-    xattrRaw :: RawTextContent t => n -> MkAttrRes n t
+-- | Construct a simple-named attribute by escaping its value.
+xattr :: (Name n, TextContent t) => n -> t -> Xml Attr
+xattr = xattrQ DefaultNamespace
 
-instance MkAttr String t where
-    type MkAttrRes String t = t -> Xml Attr
-    xattr = xattrQ DefaultNamespace
-    xattrRaw = xattrQRaw DefaultNamespace
+-- | Construct a simple-named attribute without escaping its value.
+-- /Note:/ attribute values are quoted with double quotes.
+xattrRaw :: (Name n, RawTextContent t) => n -> t -> Xml Attr
+xattrRaw = xattrQRaw DefaultNamespace
 
-instance MkAttr Namespace t where
-    type MkAttrRes Namespace t = String -> t -> Xml Attr
-    xattr = xattrQ
-    xattrRaw = xattrQRaw
+-- | Construct an attribute by escaping its value.
+xattrQ :: (Name n, TextContent t) => Namespace -> n -> t -> Xml Attr
+xattrQ ns key value = xattrQRaw' ns (nameBuilder key) (textBuilder value)
 
--- value is escaped
-xattrQ :: TextContent t => Namespace -> String -> t -> Xml Attr
-xattrQ ns key value = xattrQRaw' ns key (textBuilder value)
+-- | Construct an attribute without escaping its value.
+-- /Note:/ attribute values are quoted with double quotes.
+xattrQRaw :: (Name n, RawTextContent t) => Namespace -> n -> t -> Xml Attr
+xattrQRaw ns key value = xattrQRaw' ns (nameBuilder key) (rawTextBuilder value)
 
--- value is NOT escaped
-xattrQRaw :: RawTextContent t => Namespace -> String -> t -> Xml Attr
-xattrQRaw ns key value = xattrQRaw' ns key (rawTextBuilder value)
-
-xattrQRaw' :: Namespace -> String -> Builder -> Xml Attr
+xattrQRaw' :: Namespace -> Builder -> Builder -> Xml Attr
 xattrQRaw' ns' key valueBuilder = Xml $
     do uriMap' <- ask
        let (mDecl, prefix, uriMap) = extendNsEnv True uriMap' ns'
@@ -280,18 +283,17 @@ xattrQRaw' ns' key valueBuilder = Xml $
                   then spaceBuilder
                   else spaceBuilder `mappend` fromString prefix `mappend` colonBuilder
            builder = nsDeclBuilder `mappend` prefixBuilder `mappend`
-                     keyBuilder `mappend` startBuilder `mappend`
+                     key `mappend` startBuilder `mappend`
                      valueBuilder `mappend` endBuilder
        return $ (Attr builder, uriMap)
     where
       spaceBuilder = fromString " "
-      keyBuilder = fromString key
       startBuilder = fromString "=\""
       endBuilder = fromString "\""
       nsDeclStartBuilder = fromString "xmlns"
       colonBuilder = fromString ":"
 
--- |  Merges a list of attributes into a single piece of XML at the attribute level.
+-- |  Merge a list of attributes into a single piece of XML at the attribute level.
 xattrs :: [Xml Attr] -> Xml Attr
 xattrs = M.mconcat
 
@@ -340,48 +342,23 @@ instance TextContent t => AddChildren t where
 instance AddChildren () where
     addChildren _ _ = fromChar '>'
 
--- | Class providing methods for constructing XML elements.
---
--- The 'String' instance of this class constructs an element in the
--- default namespace, the 'Namespace' instance allows customization of
--- namespaces.
-class AddChildren c => MkElem n c where
-    type MkElemRes n c
-    xelem :: n -> MkElemRes n c
+-- | Construct a simple-named element with the given children.
+xelem :: (Name n, AddChildren c) => n -> c -> Xml Elem
+xelem = xelemQ DefaultNamespace
 
-instance AddChildren c => MkElem String c where
-    type MkElemRes String c = c -> Xml Elem
-    xelem = xelemQ DefaultNamespace
+-- | Construct a simple-named element without any children.
+xelemEmpty :: Name n => n -> Xml Elem
+xelemEmpty name = xelemQ DefaultNamespace name (mempty :: Xml Elem)
 
-instance AddChildren c => MkElem Namespace c where
-    type MkElemRes Namespace c = String -> c -> Xml Elem
-    xelem = xelemQ
-
--- | Class providing a method for constructing XML elements without children.
---
--- The 'String' instance of this class constructs an element in the
--- default namespace, the 'Namespace' instance allows customization of
--- namespaces.
-class MkEmptyElem n where
-    type MkEmptyElemRes n
-    xelemEmpty :: n -> MkEmptyElemRes n
-
-instance MkEmptyElem String where
-    type MkEmptyElemRes String = Xml Elem
-    xelemEmpty name = xelemQ DefaultNamespace name (mempty :: Xml Elem)
-
-instance MkEmptyElem Namespace where
-    type MkEmptyElemRes Namespace = String -> Xml Elem
-    xelemEmpty ns name = xelemQ ns name (mempty :: Xml Elem)
-
-xelemQ :: AddChildren c => Namespace -> String -> c -> Xml Elem
+-- | Construct an element with the given children.
+xelemQ :: (Name n, AddChildren c) => Namespace -> n -> c -> Xml Elem
 xelemQ ns' name children = Xml $
     do oldUriMap <- ask
        let (mDecl, prefix,!uriMap) = oldUriMap `seq` extendNsEnv False oldUriMap ns'
        let elemNameBuilder =
                if null prefix
-                  then fromString name
-                  else fromString prefix `mappend` fromString ":" `mappend` fromString name
+                  then nameBuilder name
+                  else fromString prefix `mappend` fromString ":" `mappend` nameBuilder name
        let nsDeclBuilder =
                case mDecl of
                  Nothing -> mempty
@@ -395,6 +372,10 @@ xelemQ ns' name children = Xml $
        let b3 = b2 `mappend` addChildren children uriMap
        let builderOut = Elem (b3 `mappend` fromString "</" `mappend` elemNameBuilder `mappend` fromString "\n>")
        return (builderOut, oldUriMap)
+
+-- | Construct an element without any children.
+xelemQEmpty :: Name n => Namespace -> n -> Xml Elem
+xelemQEmpty ns name = xelemQ ns name (mempty :: Xml Elem)
 
 -- |  Merges a list of elements into a single piece of XML at the element level.
 xelems :: [Xml Elem] -> Xml Elem
@@ -641,7 +622,7 @@ xhtmlFramesetDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeFrame
 -- | Constructs the root element of an XHTML document.
 xhtmlRootElem :: String -> Xml Elem -> Xml Elem
 xhtmlRootElem lang children =
-    xelem (namespace "" "http://www.w3.org/1999/xhtml") "html"
-          (xattr "xml:lang" lang <>
-           xattr "lang" lang <#>
-           children)
+    xelemQ (namespace "" "http://www.w3.org/1999/xhtml") "html"
+           (xattr "xml:lang" lang <>
+            xattr "lang" lang <#>
+            children)
