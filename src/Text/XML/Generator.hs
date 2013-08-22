@@ -1,5 +1,6 @@
-{-# LANGUAGE FlexibleContexts, TypeSynonymInstances, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, BangPatterns,
-             UndecidableInstances, OverlappingInstances, CPP #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE FlexibleInstances #-}
 -- | This module provides combinators for generating XML documents.
 --
 -- As an example, suppose you want to generate the following XML document:
@@ -27,16 +28,16 @@ module Text.XML.Generator (
   -- * Documents
   , Doc, DocInfo(..), doc, defaultDocInfo
   -- * Namespaces
-  , Namespace, Prefix, Uri
+  , Namespace, Prefix, Uri, Name
   , namespace, noNamespace, defaultNamespace
   -- * Elements
   , Elem, xelem, xelemQ, xelemEmpty, xelemQEmpty, AddChildren
   , xelems, noElems, xelemWithText, (<>), (<#>)
   -- * Attributes
-  , Attr, xattr, xattrRaw, xattrQ, xattrQRaw
+  , Attr, xattr, xattrQ, xattrQRaw
   , xattrs, noAttrs
   -- * Text
-  , RawTextContent, TextContent
+  , TextContent
   , xtext, xtextRaw, xentityRef
   -- * Other
   , xempty , Misc(xprocessingInstruction, xcomment)
@@ -98,10 +99,16 @@ newtype Attr = Attr { unAttr :: Builder }
 newtype Doc = Doc { unDoc :: Builder }
 
 -- | Namespace prefix.
-type Prefix = String
+type Prefix = T.Text
 
 -- | Namespace URI.
-type Uri = String -- must not be empty
+type Uri = T.Text -- must not be empty
+
+-- | A type for names
+type Name = T.Text
+
+nameBuilder :: Name -> Builder
+nameBuilder = fromText
 
 -- | Type for representing presence or absence of an XML namespace.
 data Namespace
@@ -113,9 +120,9 @@ data Namespace
 -- | Constructs a qualified XML namespace.
 --   The given URI must not be the empty string.
 namespace :: Prefix -> Uri -> Namespace
-namespace p u = if null u
-            then error "Text.XML.Generator.ns: namespace URI must not be empty"
-            else QualifiedNamespace p u
+namespace p u = if T.null u
+                then error "Text.XML.Generator.ns: namespace URI must not be empty"
+                else QualifiedNamespace p u
 
 -- | A 'Namespace' value denoting the absence of any XML namespace information.
 noNamespace :: Namespace
@@ -189,80 +196,50 @@ doc di rootElem = Xml $
        postMisc = docInfo_postMisc di
 
 --
--- Names
---
-
-class Name n where
-    nameBuilder :: n -> Builder
-
-instance Name String where
-    nameBuilder = fromString
-
-instance Name T.Text where
-    nameBuilder = fromText
-
-instance Name TL.Text where
-    nameBuilder = fromLazyText
-
---
 -- Text content
 --
 
--- | Construction of text content not subject to escaping.
-class RawTextContent t where
-    rawTextBuilder :: t -> Builder
+-- | Text content subject to escaping.
+type TextContent = T.Text
 
--- | Construction of text content subject to escaping.
-class RawTextContent t => TextContent t where
-    escape :: t -> t
-    textBuilder :: TextContent t => t -> Builder
-    textBuilder = rawTextBuilder . escape
+textBuilder :: TextContent -> Builder
+textBuilder = fromText . escapeText
 
-instance RawTextContent String where
-    rawTextBuilder = fromString
+-- | Constructs a text node by escaping the given argument.
+xtext :: TextContent -> Xml Elem
+xtext content = Xml $
+    do env <- ask
+       return (Elem $ textBuilder content, env)
 
-instance TextContent String where
-    escape = genericEscape foldr showString showChar
+-- | Constructs a text node /without/ escaping the given argument.
+xtextRaw :: Builder -> Xml Elem
+xtextRaw content = Xml $
+    do env <- ask
+       return (Elem content, env)
 
-instance RawTextContent T.Text where
-    rawTextBuilder = fromText
-
-instance TextContent T.Text where
-    escape = genericEscape T.foldr T.append T.cons
-
-instance RawTextContent TL.Text where
-    rawTextBuilder = fromLazyText
-
-instance TextContent TL.Text where
-    escape = genericEscape TL.foldr TL.append TL.cons
-
-instance RawTextContent BS.ByteString where
-    rawTextBuilder = fromByteString
-
-instance RawTextContent BSL.ByteString where
-    rawTextBuilder = fromLazyByteString
+-- | Constructs a reference to the named entity.
+-- /Note:/ no escaping is performed on the name of the entity
+xentityRef :: Name -> Xml Elem
+xentityRef name = Xml $
+    do env <- ask
+       return (Elem $ fromChar '&' <> fromText name <> fromChar ';', env)
 
 --
 -- Attributes
 --
 
 -- | Construct a simple-named attribute by escaping its value.
-xattr :: (Name n, TextContent t) => n -> t -> Xml Attr
+xattr :: Name -> TextContent -> Xml Attr
 xattr = xattrQ DefaultNamespace
 
--- | Construct a simple-named attribute without escaping its value.
--- /Note:/ attribute values are quoted with double quotes.
-xattrRaw :: (Name n, RawTextContent t) => n -> t -> Xml Attr
-xattrRaw = xattrQRaw DefaultNamespace
-
 -- | Construct an attribute by escaping its value.
-xattrQ :: (Name n, TextContent t) => Namespace -> n -> t -> Xml Attr
+xattrQ :: Namespace -> Name -> TextContent -> Xml Attr
 xattrQ ns key value = xattrQRaw' ns (nameBuilder key) (textBuilder value)
 
 -- | Construct an attribute without escaping its value.
 -- /Note:/ attribute values are quoted with double quotes.
-xattrQRaw :: (Name n, RawTextContent t) => Namespace -> n -> t -> Xml Attr
-xattrQRaw ns key value = xattrQRaw' ns (nameBuilder key) (rawTextBuilder value)
+xattrQRaw :: Namespace -> Name -> Builder -> Xml Attr
+xattrQRaw ns key value = xattrQRaw' ns (nameBuilder key) value
 
 xattrQRaw' :: Namespace -> Builder -> Builder -> Xml Attr
 xattrQRaw' ns' key valueBuilder = Xml $
@@ -272,16 +249,16 @@ xattrQRaw' ns' key valueBuilder = Xml $
                case mDecl of
                  Nothing -> mempty
                  Just (p, u) ->
-                     let uriBuilder = fromString u
+                     let uriBuilder = fromText u
                          prefixBuilder =
-                             if null p then mempty else colonBuilder `mappend` fromString p
+                             if T.null p then mempty else colonBuilder `mappend` fromText p
                      in spaceBuilder `mappend` nsDeclStartBuilder
                         `mappend` prefixBuilder `mappend` startBuilder `mappend` uriBuilder
                         `mappend` endBuilder
            prefixBuilder =
-               if null prefix
+               if T.null prefix
                   then spaceBuilder
-                  else spaceBuilder `mappend` fromString prefix `mappend` colonBuilder
+                  else spaceBuilder `mappend` fromText prefix `mappend` colonBuilder
            builder = nsDeclBuilder `mappend` prefixBuilder `mappend`
                      key `mappend` startBuilder `mappend`
                      valueBuilder `mappend` endBuilder
@@ -336,37 +313,43 @@ instance AddChildren (Xml Attr, Xml Elem) where
             (Elem builder', _) = runXml uriMap' elems
         in builder `mappend` fromString "\n>" `mappend` builder'
 
-instance TextContent t => AddChildren t where
+instance AddChildren (Xml Attr, [Xml Elem]) where
+    addChildren (attrs, elems) uriMap = addChildren (attrs, xelems elems) uriMap
+
+instance AddChildren TextContent where
     addChildren t _ = fromChar '>' <> textBuilder t
+
+instance AddChildren String where
+    addChildren t _ = fromChar '>' <> fromString t
 
 instance AddChildren () where
     addChildren _ _ = fromChar '>'
 
 -- | Construct a simple-named element with the given children.
-xelem :: (Name n, AddChildren c) => n -> c -> Xml Elem
+xelem :: (AddChildren c) => Name -> c -> Xml Elem
 xelem = xelemQ DefaultNamespace
 
 -- | Construct a simple-named element without any children.
-xelemEmpty :: Name n => n -> Xml Elem
+xelemEmpty :: Name -> Xml Elem
 xelemEmpty name = xelemQ DefaultNamespace name (mempty :: Xml Elem)
 
 -- | Construct an element with the given children.
-xelemQ :: (Name n, AddChildren c) => Namespace -> n -> c -> Xml Elem
+xelemQ :: (AddChildren c) => Namespace -> Name -> c -> Xml Elem
 xelemQ ns' name children = Xml $
     do oldUriMap <- ask
        let (mDecl, prefix,!uriMap) = oldUriMap `seq` extendNsEnv False oldUriMap ns'
        let elemNameBuilder =
-               if null prefix
+               if T.null prefix
                   then nameBuilder name
-                  else fromString prefix `mappend` fromString ":" `mappend` nameBuilder name
+                  else fromText prefix `mappend` fromString ":" `mappend` nameBuilder name
        let nsDeclBuilder =
                case mDecl of
                  Nothing -> mempty
                  Just (p, u) ->
                      let prefixBuilder =
-                             if null p then mempty else fromChar ':' `mappend` fromString p
+                             if T.null p then mempty else fromChar ':' `mappend` fromText p
                      in fromString " xmlns" `mappend` prefixBuilder `mappend` fromString "=\""
-                        `mappend` fromString u `mappend` fromString "\""
+                        `mappend` fromText u `mappend` fromString "\""
        let b1 = fromString "<"
        let b2 = b1 `mappend` elemNameBuilder `mappend` nsDeclBuilder
        let b3 = b2 `mappend` addChildren children uriMap
@@ -374,7 +357,7 @@ xelemQ ns' name children = Xml $
        return (builderOut, oldUriMap)
 
 -- | Construct an element without any children.
-xelemQEmpty :: Name n => Namespace -> n -> Xml Elem
+xelemQEmpty :: Namespace -> Name -> Xml Elem
 xelemQEmpty ns name = xelemQ ns name (mempty :: Xml Elem)
 
 -- |  Merges a list of elements into a single piece of XML at the element level.
@@ -386,7 +369,7 @@ noElems :: Xml Elem
 noElems = xempty
 
 -- | The expression @xelemWithText n t@ constructs an XML element with name @n@ and text content @t@.
-xelemWithText :: (TextContent t) => String -> t -> Xml Elem
+xelemWithText :: Name -> TextContent -> Xml Elem
 xelemWithText n t = xelem n (xtext t)
 
 instance Monoid (Xml Elem) where
@@ -400,25 +383,6 @@ instance Monoid (Xml Elem) where
 --
 -- Other XML constructs
 --
-
--- | Constructs a text node by escaping the given argument.
-xtext :: TextContent t => t -> Xml Elem
-xtext content = Xml $
-    do env <- ask
-       return (Elem $ textBuilder content, env)
-
--- | Constructs a text node /without/ escaping the given argument.
-xtextRaw :: RawTextContent t => t -> Xml Elem
-xtextRaw content = Xml $
-    do env <- ask
-       return (Elem $ rawTextBuilder content, env)
-
--- | Constructs a reference to the named entity.
--- /Note:/ no escaping is performed on the name of the entity
-xentityRef :: String -> Xml Elem
-xentityRef name = Xml $
-    do env <- ask
-       return (Elem $ fromChar '&' <> fromString name <> fromChar ';', env)
 
 -- | Class providing methods for adding processing instructions and comments.
 class Renderable t => Misc t where
@@ -516,18 +480,18 @@ extendNsEnv :: Bool -> NsEnv -> Namespace -> (Maybe (Prefix, Uri), Prefix, NsEnv
 extendNsEnv isAttr env ns =
     case ns of
       NoNamespace
-          | isAttr -> (Nothing, "", env)
+          | isAttr -> (Nothing, T.empty, env)
           | otherwise ->
-              case Map.lookup "" (ne_namespaceMap env) of
+              case Map.lookup T.empty (ne_namespaceMap env) of
                 Nothing ->  -- empty prefix not in use
-                  (Nothing, "", env { ne_noNamespaceInUse = True })
+                  (Nothing, T.empty, env { ne_noNamespaceInUse = True })
                 Just uri -> -- empty prefix mapped to uri
-                  (Just ("", ""), "", env { ne_namespaceMap = Map.delete "" (ne_namespaceMap env)
+                  (Just (T.empty, T.empty), T.empty, env { ne_namespaceMap = Map.delete T.empty (ne_namespaceMap env)
                                           , ne_noNamespaceInUse = True })
       DefaultNamespace ->
-          (Nothing, "", env)
+          (Nothing, T.empty, env)
       QualifiedNamespace p' u ->
-          let p = if null p' && (isAttr || ne_noNamespaceInUse env) then "_" else p'
+          let p = if T.null p' && (isAttr || ne_noNamespaceInUse env) then T.pack "_" else p'
               (mDecl, prefix, newMap) = genValidPrefix (ne_namespaceMap env) p u
           in (mDecl, prefix, env { ne_namespaceMap = newMap })
     where
@@ -537,50 +501,26 @@ extendNsEnv isAttr env ns =
           Just foundUri ->
               if foundUri == uri
                  then (Nothing, prefix, map)
-                 else genValidPrefix map ('_':prefix) uri
+                 else genValidPrefix map (T.cons '_' prefix) uri
 
-{-# SPECIALIZE INLINE genericEscape ::
-     ((Char -> String -> String) -> String -> String -> String)
-  -> (String -> String -> String)
-  -> (Char -> String -> String)
-  -> String
-  -> String #-}
-{-# SPECIALIZE INLINE genericEscape ::
-     ((Char -> T.Text -> T.Text) -> T.Text -> T.Text -> T.Text)
-  -> (T.Text -> T.Text -> T.Text)
-  -> (Char -> T.Text -> T.Text)
-  -> T.Text
-  -> T.Text #-}
-{-# SPECIALIZE INLINE genericEscape ::
-     ((Char -> TL.Text -> TL.Text) -> TL.Text -> TL.Text -> TL.Text)
-  -> (TL.Text -> TL.Text -> TL.Text)
-  -> (Char -> TL.Text -> TL.Text)
-  -> TL.Text
-  -> TL.Text #-}
-genericEscape :: (S.IsString s)
-              => ((Char -> s -> s) -> s -> s -> s)
-              -> (s -> s -> s)
-              -> (Char -> s -> s)
-              -> s
-              -> s
-genericEscape foldr showString' showChar x = foldr escChar (S.fromString "") x
+escapeText :: T.Text -> T.Text
+escapeText = T.foldr escChar T.empty
     where
       -- copied from xml-light
       escChar c = case c of
-        '<'   -> showString "&lt;"
-        '>'   -> showString "&gt;"
-        '&'   -> showString "&amp;"
-        '"'   -> showString "&quot;"
+        '<'   -> T.append (T.pack "&lt;")
+        '>'   -> T.append (T.pack "&gt;")
+        '&'   -> T.append (T.pack "&amp;")
+        '"'   -> T.append (T.pack "&quot;")
         -- we use &#39 instead of &apos; because IE apparently has difficulties
         -- rendering &apos; in xhtml.
         -- Reported by Rohan Drape <rohan.drape@gmail.com>.
-        '\''  -> showString "&#39;"
+        '\''  -> T.append (T.pack "&#39;")
         -- XXX: Is this really wortherd?
         -- We could deal with these issues when we convert characters to bytes.
-        _ | (oc <= 0x7f && isPrint c) || c == '\n' || c == '\r' -> showChar c
-          | otherwise -> showString "&#" . showString (show oc) . showChar ';'
+        _ | (oc <= 0x7f && isPrint c) || c == '\n' || c == '\r' -> T.cons c
+          | otherwise -> T.append (T.pack "&#") . T.append (T.pack (show oc)) . T.cons ';'
             where oc = ord c
-      showString = showString' . S.fromString
 
 --
 -- XHTML
@@ -620,9 +560,9 @@ xhtmlFramesetDocInfo :: DocInfo
 xhtmlFramesetDocInfo = defaultDocInfo { docInfo_docType = Just xhtmlDoctypeFrameset }
 
 -- | Constructs the root element of an XHTML document.
-xhtmlRootElem :: String -> Xml Elem -> Xml Elem
+xhtmlRootElem :: T.Text -> Xml Elem -> Xml Elem
 xhtmlRootElem lang children =
-    xelemQ (namespace "" "http://www.w3.org/1999/xhtml") "html"
-           (xattr "xml:lang" lang <>
-            xattr "lang" lang <#>
+    xelemQ (namespace (T.pack "") (T.pack "http://www.w3.org/1999/xhtml")) (T.pack "html")
+           (xattr (T.pack "xml:lang") lang <>
+            xattr (T.pack "lang") lang <#>
             children)

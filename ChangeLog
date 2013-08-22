@@ -1,3 +1,12 @@
+0.6.0.0
+	- removed all overloading for names and text-content
+	  (overloading caused many typing problems in applications)
+
+0.5.0.0 (2012-09-25)
+	- resolved problems with overloaded string literals
+	- fixed benchmarks and tests
+	- NOT backwards compatible
+
 0.4.0.3 (2012-09-12)
 	- Fixes for GHC 7.6
 

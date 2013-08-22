@@ -140,7 +140,7 @@ prop_textOk (ValidXmlString s) =
         treeListText = unsafePerformIO $ runX (readString [withWarnings no, withErrors no] (BSLC.unpack $ xrender docText))
     in treeListStr == treeListText
     where
-      t = fromString s :: T.Text
+      t = s
 
 prop_quotingOk (ValidXmlString s) =
     let doc = xelem "root" (xattr "attr" s, xtext s)
@@ -156,21 +156,21 @@ prop_quotingOk (ValidXmlString s) =
                                elems -> xshow elems
                                [NTree (XText textValue) _] -> textValue
                                [] -> ""
-             in normWsAttr s == attrValue && normWsElem s == textValue
+             in normWsAttr s == T.pack attrValue && normWsElem s == T.pack textValue
          l -> error (show root ++ "\n" ++ show l)
     where
-      normWsAttr = T.unpack . T.replace "\r" " " . T.replace "\n" " " . T.replace "\n\r" " " . T.pack
-      normWsElem = T.unpack . T.replace "\r" "\n" . T.replace "\n\r" "\b" . T.pack
+      normWsAttr = T.replace "\r" " " . T.replace "\n" " " . T.replace "\n\r" " "
+      normWsElem = T.replace "\r" "\n" . T.replace "\n\r" "\b"
       childrenOfNTree (NTree _ l) = l
 
-newtype ValidXmlString = ValidXmlString String
+newtype ValidXmlString = ValidXmlString T.Text
     deriving (Eq, Show)
 
 instance Arbitrary ValidXmlString where
     arbitrary = sized $ \n ->
                 do k <- choose (0, n)
                    s <- sequence [validXmlChar | _ <- [1..k] ]
-                   return $ ValidXmlString s
+                   return $ ValidXmlString (T.pack s)
         where
           validXmlChar =
               let l = map chr ([0x9, 0xA, 0xD] ++ [0x20..0xD7FF] ++
