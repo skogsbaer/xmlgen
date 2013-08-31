@@ -29,6 +29,7 @@ import Data.String
 import qualified Data.Text as T
 
 import Test.Framework
+import Test.Framework.TestManager
 
 import Text.XML.Generator
 
