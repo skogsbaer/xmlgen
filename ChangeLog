@@ -1,3 +1,6 @@
+0.6.1.0 (2013-08-31)
+	- upgraded some dependencies
+
 0.6.0.0
 	- removed all overloading for names and text-content
 	  (overloading caused many typing problems in applications)
