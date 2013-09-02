@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
-{-# OPTIONS_GHC -F -pgmF htfpp #-}
+{-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fno-warn-overlapping-patterns #-}
 
 #if !MIN_VERSION_base(4,6,0)
@@ -16,6 +16,7 @@ import System.FilePath
 import System.IO
 import System.IO.Unsafe
 import System.Environment
+import System.Exit
 
 import Data.Char (ord, chr)
 import qualified Data.ByteString.Lazy as BSL
@@ -28,10 +29,17 @@ import Data.Tree.NTree.TypeDefs
 import Data.String
 import qualified Data.Text as T
 
-import Test.Framework
-import Test.Framework.TestManager
+import qualified Test.HUnit as H
+import qualified Test.QuickCheck as Q
 
 import Text.XML.Generator
+
+assertEqual_ :: (Eq a, Show a) => FilePath -> Int -> a -> a -> IO ()
+assertEqual_ file line x y =
+    H.assertEqual (file ++ ":" ++ show line ++ ": Expected " ++ show x ++
+                   ", given: " ++ show y) x y
+
+#define assertEqual assertEqual_ __FILE__ __LINE__
 
 test :: Renderable r => FilePath -> Xml r -> IO ()
 test f x = BSL.writeFile f (xrender x)
@@ -167,17 +175,40 @@ prop_quotingOk (ValidXmlString s) =
 newtype ValidXmlString = ValidXmlString T.Text
     deriving (Eq, Show)
 
-instance Arbitrary ValidXmlString where
-    arbitrary = sized $ \n ->
-                do k <- choose (0, n)
+instance Q.Arbitrary ValidXmlString where
+    arbitrary = Q.sized $ \n ->
+                do k <- Q.choose (0, n)
                    s <- sequence [validXmlChar | _ <- [1..k] ]
                    return $ ValidXmlString (T.pack s)
         where
           validXmlChar =
               let l = map chr ([0x9, 0xA, 0xD] ++ [0x20..0xD7FF] ++
                                [0xE000..0xFFFD] ++ [0x10000..0x10FFFF])
-              in elements l
+              in Q.elements l
+
+qcAsTest :: Q.Testable prop => String -> prop -> H.Test
+qcAsTest name prop =
+    H.TestLabel name (H.TestCase checkProp)
+    where
+      checkProp =
+          do res <- Q.quickCheckResult prop
+             case res of
+               Q.Success _ _ _ -> return ()
+               _ -> H.assertFailure ("QC property " ++ name ++ " failed: "
+                                     ++ show res)
+
+allTests :: H.Test
+allTests = H.TestList [H.TestLabel "test_1" (H.TestCase test_1)
+                      ,H.TestLabel "test_2" (H.TestCase test_2)
+                      ,H.TestLabel "test_3" (H.TestCase test_3)
+                      ,H.TestLabel "test_4" (H.TestCase test_4)
+                      ,H.TestLabel "test_5" (H.TestCase test_5)
+                      ,H.TestLabel "test_xhtml" (H.TestCase test_xhtml)
+                      ,qcAsTest "prop_textOk" prop_textOk
+                      ,qcAsTest "prop_quotingOk" prop_quotingOk]
 
 main =
-    do args <- getArgs
-       runTestWithArgs args htf_thisModulesTests
+    do counts <- H.runTestTT allTests
+       if H.errors counts > 0 || H.failures counts > 0
+       then exitWith (ExitFailure 1)
+       else exitWith ExitSuccess
