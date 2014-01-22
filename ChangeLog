@@ -1,3 +1,6 @@
+0.6.2.1 (2014-01-22)
+	- remove upper bounds on dependencies
+
 0.6.1.0 (2013-08-31)
 	- upgraded some dependencies
 
