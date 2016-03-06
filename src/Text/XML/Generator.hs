@@ -300,18 +300,18 @@ class AddChildren c where
 instance AddChildren (Xml Attr) where
     addChildren attrs uriMap =
        let (Attr builder', _) = runXml uriMap attrs
-       in builder' <> fromString "\n>"
+       in builder' <> fromString ">\n"
 
 instance AddChildren (Xml Elem) where
     addChildren elems uriMap =
        let (Elem builder', _) = runXml uriMap elems
-       in fromString "\n>" `mappend` builder'
+       in fromString ">\n" `mappend` builder'
 
 instance AddChildren (Xml Attr, Xml Elem) where
     addChildren (attrs, elems) uriMap =
         let (Attr builder, uriMap') = runXml uriMap attrs
             (Elem builder', _) = runXml uriMap' elems
-        in builder `mappend` fromString "\n>" `mappend` builder'
+        in builder `mappend` fromString ">\n" `mappend` builder'
 
 instance AddChildren (Xml Attr, [Xml Elem]) where
     addChildren (attrs, elems) uriMap = addChildren (attrs, xelems elems) uriMap
@@ -353,7 +353,7 @@ xelemQ ns' name children = Xml $
        let b1 = fromString "<"
        let b2 = b1 `mappend` elemNameBuilder `mappend` nsDeclBuilder
        let b3 = b2 `mappend` addChildren children uriMap
-       let builderOut = Elem (b3 `mappend` fromString "</" `mappend` elemNameBuilder `mappend` fromString "\n>")
+       let builderOut = Elem (b3 `mappend` fromString "</" `mappend` elemNameBuilder `mappend` fromString ">\n")
        return (builderOut, oldUriMap)
 
 -- | Construct an element without any children.
