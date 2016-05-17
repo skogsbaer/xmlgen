@@ -38,7 +38,7 @@ test-suite xmlgen-tests
 
 Benchmark xmlgen-bench
   Type:             exitcode-stdio-1.0
-  Build-Depends:    base >= 4.2 && < 5, text >= 0.10, criterion >= 0.6,
+  Build-Depends:    base >= 4.2 && < 5, text >= 0.10, criterion >= 1,
                     bytestring >= 0.9, xmlgen
   Hs-Source-Dirs:   test
   Ghc-Options:      -O2 -rtsopts
