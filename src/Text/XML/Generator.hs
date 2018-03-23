@@ -54,7 +54,6 @@ import Prelude hiding (elem)
 import Control.Monad.Reader (Reader(..), ask, asks, runReader)
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy as BSL
-import Data.Monoid hiding (mconcat)
 import qualified Data.Monoid as M
 
 import Blaze.ByteString.Builder
@@ -66,6 +65,14 @@ import qualified Data.ByteString.Lazy as BSL
 
 import Data.Char (isPrint, ord)
 import qualified Data.String as S
+
+#if MIN_VERSION_base(4,9,0)
+import Data.Semigroup
+import Data.Monoid hiding (mconcat, (<>))
+#else
+-- for ghc 7.10
+import Data.Monoid hiding (mconcat)
+#endif
 
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
@@ -278,13 +285,31 @@ xattrs = M.mconcat
 noAttrs :: Xml Attr
 noAttrs = xempty
 
+{-# INLINE mappendAttr #-}
+mappendAttr :: Xml Attr -> Xml Attr -> Xml Attr
+mappendAttr x1 x2 = Xml $
+    do env <- ask
+       let (Attr b1, env') = runXml env x1
+       let (Attr b2, env'') = runXml env' x2
+       return $ (Attr $ b1 `mappend` b2, env'')
+
+#if MIN_VERSION_base(4,9,0)
+instance Semigroup (Xml Attr) where
+    (<>) = mappendAttr
+
 instance Monoid (Xml Attr) where
     mempty = noAttrs
-    mappend x1 x2 = Xml $
-        do env <- ask
-           let (Attr b1, env') = runXml env x1
-           let (Attr b2, env'') = runXml env' x2
-           return $ (Attr $ b1 `mappend` b2, env'')
+#if !(MIN_VERSION_base(4,11,0))
+    -- this is redundant starting with base-4.11 / GHC 8.4
+    mappend = (<>)
+#endif
+#else
+-- for ghc 7.10
+instance Monoid (Xml Attr) where
+    mempty = noAttrs
+    mappend = mappendAttr
+#endif
+
 
 --
 -- Elements
@@ -372,14 +397,30 @@ noElems = xempty
 xelemWithText :: Name -> TextContent -> Xml Elem
 xelemWithText n t = xelem n (xtext t)
 
+{-# INLINE mappendElem #-}
+mappendElem :: Xml Elem -> Xml Elem -> Xml Elem
+mappendElem x1 x2 = Xml $
+    do env <- ask
+       let (Elem b1, env') = runXml env x1
+           (Elem b2, env'') = runXml env' x2
+       return (Elem $ b1 `mappend` b2, env'')
+
+#if MIN_VERSION_base(4,9,0)
+instance Semigroup (Xml Elem) where
+    (<>) = mappendElem
+
 instance Monoid (Xml Elem) where
     mempty = noElems
-    mappend x1 x2 = Xml $
-        do env <- ask
-           let (Elem b1, env') = runXml env x1
-               (Elem b2, env'') = runXml env' x2
-           return (Elem $ b1 `mappend` b2, env'')
-
+#if !(MIN_VERSION_base(4,11,0))
+    -- this is redundant starting with base-4.11 / GHC 8.4
+    mappend = (<>)
+#endif
+#else
+-- for ghc 7.10
+instance Monoid (Xml Elem) where
+    mempty = noElems
+    mappend = mappendElem
+#endif
 --
 -- Other XML constructs
 --
