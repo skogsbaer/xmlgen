@@ -18,7 +18,7 @@
 -- let people = [(\"Stefan\", \"32\"), (\"Judith\", \"4\")]
 -- in 'doc' 'defaultDocInfo' $
 --      'xelem' \"people\" $
---        'xelems' $ map (\(name, age) -> 'xelem' \"person\" ('xattr' \"age\" age '<#>' 'xtext' name)) people
+--        'xelems' $ map (\\(name, age) -> 'xelem' \"person\" ('xattr' \"age\" age '<#>' 'xtext' name)) people
 -- @
 
 module Text.XML.Generator (
